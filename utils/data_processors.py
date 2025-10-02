@@ -38,9 +38,15 @@ import pandas as pd
 import tempfile
 from pathlib import Path
 
+import streamlit as st
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import tempfile
+
 def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, param_cols: list, perm_col: str):
     """Processa dados e plota gráficos, preservando resultados anteriores.
-    Não realiza exportação automática.
+    Retorna sempre (temp_path, all_results) para compatibilidade com main.py
     """
 
     # Padronizar colunas principais
@@ -54,6 +60,9 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
         param_cols = ['_dummy']
 
     all_results = []
+
+    temp_path = Path(tempfile.gettempdir()) / "s21_analysis"
+    temp_path.mkdir(exist_ok=True)
 
     for _, combo in unique_combinations.iterrows():
         if param_cols[0] != '_dummy':
@@ -80,13 +89,14 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
         from utils.calculation_engines import manual_ressonance_identification
         results = manual_ressonance_identification(
             df_subset, filename, param_id, combo, param_cols, perm_col,
-            unique_combinations, Path(tempfile.gettempdir())  # temp_path para TXT pode ser global
+            unique_combinations, temp_path
         )
 
         st.session_state[results_key] = results
         all_results.extend(results)
 
-    return all_results
+    return temp_path, all_results
+
 
 
 
