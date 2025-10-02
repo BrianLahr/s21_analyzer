@@ -5,20 +5,11 @@ import tempfile
 import shutil
 import zipfile
 
-# ======================
-# Imports de módulos locais
-# ======================
 from utils.file_handlers import handle_file_upload, display_file_preview
 from utils.data_processors import identify_columns, process_data
-from utils.plot_generators import plot_interactive_curve
-from utils.calculation_engines import manual_ressonance_identification
 
-
-# ======================
-# Setup e UI
-# ======================
 def setup_ui():
-    """Configuração inicial de layout e CSS"""
+    """Configuração inicial de layout"""
     st.set_page_config(
         page_title="Analisador S21",
         page_icon="📊",
@@ -26,24 +17,17 @@ def setup_ui():
         initial_sidebar_state="expanded"
     )
 
-    custom_css = """
-    <style>
-    .main-header { font-size: 2.5rem; color: #1f77b4; text-align: center; margin-bottom: 2rem; }
-    .result-card { background-color: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; }
-    .ressonance-input { background-color: #e8f4fd; padding: 1rem; border-radius: 0.5rem; margin: 1rem 0; border-left: 4px solid #1f77b4; }
-    .combination-section { background-color: #f8f9fa; padding: 1.5rem; border-radius: 0.5rem; margin: 2rem 0; border: 2px solid #e9ecef; }
-    </style>
-    """
-    st.markdown(custom_css, unsafe_allow_html=True)
-    st.markdown('<h1 class="main-header">📊 Analisador de Parâmetros S21</h1>', unsafe_allow_html=True)
+    # CORREÇÃO: REMOVER CSS FIXO para adaptar ao modo escuro automaticamente
+    st.markdown('<h1 style="text-align: center; margin-bottom: 2rem;">📊 Analisador de Parâmetros S21</h1>', unsafe_allow_html=True)
     st.markdown("---")
 
     # Sidebar
     st.sidebar.title("ℹ️ Sobre")
     st.sidebar.info(
-        "Esta aplicação analisa ressonâncias em dados S21 de arquivos CSV.\n"
-        "Visualize os gráficos e identifique manualmente as ressonâncias antes de exportar."
+        "Esta aplicação analisa ressonâncias em dados S21 de arquivos CSV. "
+        "Altere as frequências para calcular automaticamente os parâmetros."
     )
+
 
 
 # ======================

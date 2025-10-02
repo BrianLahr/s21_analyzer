@@ -4,14 +4,9 @@ import numpy as np
 from scipy import interpolate
 from pathlib import Path
 
-import streamlit as st
-import numpy as np
-from scipy import interpolate
-from pathlib import Path
-
 def manual_ressonance_identification(df, filename, param_id, params, param_cols, perm_col, 
                                    unique_combinations, temp_path):
-    """Permite ao usuário identificar manualmente as ressonâncias com preservação de resultados."""
+    """Permite ao usuário identificar manualmente as ressonâncias com cálculo automático."""
     
     st.markdown("### 🔬 Identificação Manual de Ressonâncias")
     
@@ -36,7 +31,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
         f"Quantas ressonâncias deseja analisar em {param_id}?",
         min_value=0,
         max_value=50,
-        value=max(1, len(current_results)),  # mantém quantidade atual
+        value=max(1, len(current_results)),
         key=f"num_{param_id}"
     )
     
@@ -44,11 +39,11 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
     if len(current_results) > num_ressonances:
         current_results = current_results[:num_ressonances]
     elif len(current_results) < num_ressonances:
-        # Preenche com placeholders
-        for _ in range(num_ressonances - len(current_results)):
+        for i in range(len(current_results), num_ressonances):
             current_results.append({
-                'ressonancia_num': len(current_results)+1,
-                'frequencia_ressonancia_ghz': (freq_min+freq_max)/2,
+                'parametros': param_id,
+                'ressonancia_num': i + 1,
+                'frequencia_ressonancia_ghz': (freq_min + freq_max) / 2,
                 's21_ressonancia_db': None,
                 's21_ressonancia_linear': None,
                 'fwhm_3db_ghz': None,
@@ -60,55 +55,44 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 'figura_merito_linear': None
             })
     
-    st.session_state[results_key] = current_results
-    calculated_this_run = [False]*num_ressonances
-    
+    # CORREÇÃO: Processar cada ressonância com cálculo automático
     for i in range(num_ressonances):
-        st.markdown(f'<div class="ressonance-input">', unsafe_allow_html=True)
         st.markdown(f"##### Ressonância {i+1}")
         
         col1, col2 = st.columns(2)
+        
         with col1:
-            default_freq = current_results[i]['frequencia_ressonancia_ghz'] or (freq_min+freq_max)/2
+            # Campo de frequência - cálculo automático ao alterar
             freq_ressonancia = st.number_input(
                 f"Frequência de ressonância (GHz)",
                 min_value=float(freq_min),
                 max_value=float(freq_max),
-                value=float(default_freq),
+                value=float(current_results[i]['frequencia_ressonancia_ghz']),
                 step=0.01,
                 format="%.4f",
                 key=f"freq_{param_id}_{i}"
             )
         
         with col2:
-            # Informações aproximadas da ressonância
+            # CORREÇÃO: Cálculo automático e atualização em tempo real
             idx_ressonancia = (freq_interp - freq_ressonancia).argmin()
             s21_ressonancia_db = s21_db_interp[idx_ressonancia]
             s21_ressonancia_linear = s21_linear_interp[idx_ressonancia]
             
-            st.write(f"Frequência: {freq_interp[idx_ressonancia]:.4f} GHz")
-            st.write(f"S21: {s21_ressonancia_db:.4f} dB")
-            st.write(f"S21 (linear): {s21_ressonancia_linear:.4f}")
-        
-        # Botão de cálculo
-        calculate_col1, calculate_col2 = st.columns([2,1])
-        with calculate_col2:
-            if st.button(f"📊 Calcular - Ressonância {i+1}", key=f"calc_{param_id}_{i}"):
-                calculated_this_run[i] = True
-                
-                # Cálculo das larguras de banda
-                bandwidth_result_db = find_bandwidth_points(
-                    freq_interp, s21_db_interp, freq_ressonancia, s21_ressonancia_db, s21_ressonancia_db-3.0
-                )
-                target_linear = s21_ressonancia_linear / np.sqrt(2)
-                bandwidth_result_linear = find_bandwidth_points(
-                    freq_interp, s21_linear_interp, freq_ressonancia, s21_ressonancia_linear, target_linear, is_linear=True
-                )
-                
-                if bandwidth_result_db is None or bandwidth_result_linear is None:
-                    st.error(f"❌ Não foi possível calcular largura de banda para esta ressonância.")
-                    continue
-                
+            st.write(f"**Frequência:** {freq_interp[idx_ressonancia]:.4f} GHz")
+            st.write(f"**S21:** {s21_ressonancia_db:.4f} dB")
+            st.write(f"**S21 (linear):** {s21_ressonancia_linear:.4f}")
+            
+            # CORREÇÃO: Cálculo automático dos parâmetros (sem botão)
+            bandwidth_result_db = find_bandwidth_points(
+                freq_interp, s21_db_interp, freq_ressonancia, s21_ressonancia_db, s21_ressonancia_db - 3.0
+            )
+            target_linear = s21_ressonancia_linear / np.sqrt(2)
+            bandwidth_result_linear = find_bandwidth_points(
+                freq_interp, s21_linear_interp, freq_ressonancia, s21_ressonancia_linear, target_linear, is_linear=True
+            )
+            
+            if bandwidth_result_db and bandwidth_result_linear:
                 freq_left_db, freq_right_db, fwhm_db, Q_db = bandwidth_result_db
                 freq_left_linear, freq_right_linear, fwhm_linear, Q_linear = bandwidth_result_linear
                 
@@ -116,9 +100,10 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     freq_ressonancia, params, perm_col, unique_combinations, Q_db, Q_linear, s21_ressonancia_linear
                 )
                 
+                # Atualizar resultado automaticamente
                 result = {
                     'parametros': param_id,
-                    'ressonancia_num': i+1,
+                    'ressonancia_num': i + 1,
                     'frequencia_ressonancia_ghz': freq_ressonancia,
                     's21_ressonancia_db': s21_ressonancia_db,
                     's21_ressonancia_linear': s21_ressonancia_linear,
@@ -136,43 +121,47 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                         result[col] = params[col]
                 
                 current_results[i] = result
-                st.session_state[results_key] = current_results
                 
-                # Salvar resultado individual em TXT
+                # CORREÇÃO: Mostrar resultados calculados automaticamente
+                st.markdown("**📊 Parâmetros Calculados:**")
+                
+                col_res1, col_res2 = st.columns(2)
+                with col_res1:
+                    st.markdown(f"""
+                    **Método -3dB:**
+                    - Largura de banda: {fwhm_db:.6f} GHz
+                    - Fator Q: {Q_db:.2f}
+                    """)
+                
+                with col_res2:
+                    st.markdown(f"""
+                    **Método 1/√2:**
+                    - Largura de banda: {fwhm_linear:.6f} GHz  
+                    - Fator Q: {Q_linear:.2f}
+                    """)
+                
+                if sensitivity is not None:
+                    st.markdown(f"""
+                    **Sensibilidade:**
+                    - Sensibilidade: {sensitivity:.6f} GHz/√εr
+                    - Figura de mérito (-3dB): {figure_of_merit_db:.6f}
+                    - Figura de mérito (1/√2): {figure_of_merit_linear:.6f}
+                    """)
+                
+                # Salvar resultado automaticamente em TXT
                 txt_content = generate_txt_result(result, param_cols, params)
                 txt_filename = f"resultado_{Path(filename).stem}_{param_id}_ressonancia_{i+1}.txt"
                 txt_path = temp_path / txt_filename
                 with open(txt_path, 'w') as f:
                     f.write(txt_content)
-                
-                st.success(f"✅ Parâmetros calculados para ressonância {i+1}!")
+                    
+            else:
+                st.warning("⚠️ Não foi possível calcular os parâmetros para esta frequência.")
         
-        # Mostrar resultados anteriores mesmo sem recalcular
-        if current_results[i]['fwhm_3db_ghz'] is not None and not calculated_this_run[i]:
-            st.info("📊 **Resultados Calculados Anteriormente**")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(f"""
-                <div class="result-card">
-                <b>Largura de banda (-3dB):</b> {current_results[i]['fwhm_3db_ghz']:.6f} GHz<br>
-                <b>Fator Q (-3dB):</b> {current_results[i]['Q_3db']:.2f}
-                </div>
-                """, unsafe_allow_html=True)
-            with col2:
-                st.markdown(f"""
-                <div class="result-card">
-                <b>Largura de banda (1/√2):</b> {current_results[i]['fwhm_linear_ghz']:.6f} GHz<br>
-                <b>Fator Q (1/√2):</b> {current_results[i]['Q_linear']:.2f}
-                </div>
-                """, unsafe_allow_html=True)
-            if current_results[i]['sensibilidade_ghz_sqrt_er'] is not None:
-                st.markdown(f"""
-                <div class="result-card">
-                <b>Sensibilidade:</b> {current_results[i]['sensibilidade_ghz_sqrt_er']:.6f} GHz/√εr
-                </div>
-                """, unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("---")
+    
+    # Atualizar session_state com resultados
+    st.session_state[results_key] = current_results
     
     return current_results
 

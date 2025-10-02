@@ -8,12 +8,10 @@ from scipy import interpolate
 def plot_interactive_curve(df, param_id, params, param_cols):
     """Plota a curva S21 interativa para visualização"""
     
-    # CORREÇÃO: Verificar se o DataFrame tem dados suficientes
     if df.empty or len(df) < 2:
         st.warning(f"⚠️ Dados insuficientes para plotar a curva {param_id}")
         return
     
-    # CORREÇÃO: Verificar se as colunas necessárias existem
     required_cols = ['freq_ghz', 's21_db', 's21_linear']
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
@@ -21,7 +19,6 @@ def plot_interactive_curve(df, param_id, params, param_cols):
         return
     
     try:
-        # Interpolar dados para plotagem suave
         interp_func_db = interpolate.interp1d(df['freq_ghz'], df['s21_db'], 
                                             kind='cubic', fill_value='extrapolate')
         interp_func_linear = interpolate.interp1d(df['freq_ghz'], df['s21_linear'], 
@@ -38,7 +35,6 @@ def plot_interactive_curve(df, param_id, params, param_cols):
             vertical_spacing=0.1
         )
         
-        # Gráfico em dB
         fig.add_trace(
             go.Scatter(x=freq_interp, y=s21_db_interp, mode='lines', 
                       name='S21 (dB) - Interpolado', line=dict(color='blue')),
@@ -51,42 +47,32 @@ def plot_interactive_curve(df, param_id, params, param_cols):
             row=1, col=1
         )
         
-        # Gráfico linear
         fig.add_trace(
             go.Scatter(x=freq_interp, y=s21_linear_interp, mode='lines',
                       name='S21 (linear) - Interpolado', line=dict(color='green')),
             row=2, col=1
         )
         
-        # Título com parâmetros
         if param_cols[0] != '_dummy':
             param_title = " | ".join([f"{col}: {params[col]}" for col in param_cols])
             title_text = f"Análise S21 - {param_id}<br><sub>{param_title}</sub>"
         else:
             title_text = f"Análise S21 - {param_id}"
         
-        fig.update_layout(
-            height=700, 
-            title_text=title_text,
-            showlegend=True
-        )
-        
+        fig.update_layout(height=700, title_text=title_text, showlegend=True)
         fig.update_xaxes(title_text="Frequência (GHz)", row=1, col=1)
         fig.update_yaxes(title_text="S21 (dB)", row=1, col=1)
         fig.update_xaxes(title_text="Frequência (GHz)", row=2, col=1)
         fig.update_yaxes(title_text="S21 (linear)", row=2, col=1)
         
-        # CORREÇÃO: Chave única para cada gráfico para evitar conflitos
         st.plotly_chart(fig, use_container_width=True, key=f"plot_{param_id}")
         
-        # Instruções para o usuário
+        # CORREÇÃO: Remover CSS fixo das instruções
         st.info("""
-        **📝 Instruções:**
-        1. Observe o gráfico acima e identifique as ressonâncias (mínimos na curva S21)
-        2. Na seção abaixo, insira a frequência de cada ressonância que deseja analisar
-        3. O sistema calculará automaticamente os parâmetros para cada ressonância identificada
+        **Instruções:**
+        1. Observe o gráfico e identifique as ressonâncias (mínimos na curva S21)
+        2. Altere as frequências abaixo para calcular automaticamente os parâmetros
         """)
         
     except Exception as e:
         st.error(f"❌ Erro ao plotar a curva {param_id}: {e}")
-        st.info("💡 Dica: Verifique se os dados estão no formato correto e contêm valores numéricos válidos.")
