@@ -24,16 +24,10 @@ def detect_auto_ressonances(df, min_depth_db=-3.0, min_prominence=1.0, min_dista
         s21_db = df['s21_db'].values
         s21_linear = df['s21_linear'].values
         
-        # Suavização opcional para reduzir ruído
-        from scipy.signal import savgol_filter
-        window_size = min(51, len(s21_db) // 10 * 2 + 1)  # Window size ímpar
-        if window_size > 5:
-            s21_db_smooth = savgol_filter(s21_db, window_size, 3)
-        else:
-            s21_db_smooth = s21_db
+        # REMOVIDO: Filtro Savitzky-Golay que estava causando deslocamento
         
         # Encontrar mínimos (inverter sinal pois find_peaks busca máximos)
-        inverted_s21 = -s21_db_smooth
+        inverted_s21 = -s21_db
         
         # Calcular distância em pontos
         freq_range = freq[-1] - freq[0]
@@ -58,13 +52,15 @@ def detect_auto_ressonances(df, min_depth_db=-3.0, min_prominence=1.0, min_dista
             
             # Critérios de validação
             if (s21_val_db < min_depth_db and  # Deve ser mais profundo que -3dB
-                prominence_val >= min_prominence and  # Prominência suficiente
-                is_valid_minimum(peak_idx, s21_db_smooth, freq)):  # Verificação adicional
+                prominence_val >= min_prominence):  # Prominência suficiente
+                
+                # Refinamento: encontrar o mínimo exato na região
+                refined_freq, refined_s21_db = refine_minimum_location(freq, s21_db, peak_idx)
                 
                 valid_ressonances.append({
-                    'frequencia': freq_ress,
-                    's21_db': s21_val_db,
-                    's21_linear': s21_val_linear,
+                    'frequencia': refined_freq,
+                    's21_db': refined_s21_db,
+                    's21_linear': float(interpolate.interp1d(freq, s21_linear, kind='cubic')(refined_freq)),
                     'prominence': prominence_val,
                     'index': peak_idx
                 })
@@ -76,19 +72,41 @@ def detect_auto_ressonances(df, min_depth_db=-3.0, min_prominence=1.0, min_dista
         st.warning(f"⚠️ Erro na detecção automática: {e}")
         return []
 
-def is_valid_minimum(peak_idx, s21_db, freq, window_size=5):
+def refine_minimum_location(freq, s21_db, peak_idx, window_size=10):
     """
-    Verifica se o ponto é realmente um mínimo local válido.
+    Refina a localização do mínimo usando interpolação quadrática.
     """
-    n = len(s21_db)
-    left_start = max(0, peak_idx - window_size)
-    right_end = min(n, peak_idx + window_size + 1)
+    n = len(freq)
+    start_idx = max(0, peak_idx - window_size)
+    end_idx = min(n, peak_idx + window_size + 1)
     
-    # Verificar se é o ponto mais baixo na vizinhança
-    local_min = np.min(s21_db[left_start:right_end])
-    current_val = s21_db[peak_idx]
+    # Pegar região ao redor do pico
+    freq_region = freq[start_idx:end_idx]
+    s21_region = s21_db[start_idx:end_idx]
     
-    return abs(current_val - local_min) < 0.1  # Deve ser muito próximo do mínimo local
+    # Encontrar índice do mínimo na região
+    min_idx_region = np.argmin(s21_region)
+    
+    # Se temos pontos suficientes, fazer ajuste quadrático
+    if len(freq_region) >= 3:
+        try:
+            # Ajuste quadrático para encontrar mínimo exato
+            coeffs = np.polyfit(freq_region, s21_region, 2)
+            a, b, c = coeffs
+            
+            # Mínimo da parábola: x = -b/(2a)
+            if a > 0:  # Só se for concavidade para cima
+                exact_freq = -b / (2 * a)
+                exact_s21 = a * exact_freq**2 + b * exact_freq + c
+                
+                # Verificar se está dentro da região
+                if freq_region[0] <= exact_freq <= freq_region[-1]:
+                    return exact_freq, exact_s21
+        except:
+            pass
+    
+    # Fallback: usar o ponto mínimo encontrado
+    return freq_region[min_idx_region], s21_region[min_idx_region]
 
 def manual_ressonance_identification(df, filename, param_id, params, param_cols, perm_col, 
                                    unique_combinations, temp_path):
@@ -194,7 +212,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
         f"Quantas ressonâncias deseja analisar em {param_id}?",
         min_value=0,
         max_value=50,
-        value=max(1, len(current_results)),
+        value=len(current_results),  # CORREÇÃO: usar sempre o length atual
         key=f"num_{param_id}"
     )
     
@@ -203,10 +221,12 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
         current_results = current_results[:num_ressonances]
     elif len(current_results) < num_ressonances:
         for i in range(len(current_results), num_ressonances):
+            # CORREÇÃO: Usar valor mais razoável para nova ressonância
+            default_freq = freq_min + (i + 1) * (freq_max - freq_min) / (num_ressonances + 1)
             current_results.append({
                 'parametros': param_id,
                 'ressonancia_num': i + 1,
-                'frequencia_ressonancia_ghz': (freq_min + freq_max) / 2,
+                'frequencia_ressonancia_ghz': default_freq,
                 's21_ressonancia_db': None,
                 's21_ressonancia_linear': None,
                 'fwhm_3db_ghz': None,
@@ -227,14 +247,17 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
         col1, col2 = st.columns(2)
         
         with col1:
+            # CORREÇÃO: Garantir que o valor mostrado seja atualizado
+            current_freq = current_results[i]['frequencia_ressonancia_ghz']
+            
             # Campo de frequência - cálculo automático ao alterar
             freq_ressonancia = st.number_input(
                 f"Frequência de ressonância (GHz)",
                 min_value=float(freq_min),
                 max_value=float(freq_max),
-                value=float(current_results[i]['frequencia_ressonancia_ghz']),
-                step=0.01,
-                format="%.4f",
+                value=float(current_freq),
+                step=0.001,  # Passo menor para mais precisão
+                format="%.6f",  # Mais casas decimais
                 key=f"freq_{param_id}_{i}"
             )
             
@@ -242,9 +265,9 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
             s21_ressonancia_db = float(interp_func_db(freq_ressonancia))
             s21_ressonancia_linear = float(interp_func_linear(freq_ressonancia))
             
-            st.write(f"**Frequência:** {freq_ressonancia:.4f} GHz")
+            st.write(f"**Frequência:** {freq_ressonancia:.6f} GHz")
             st.write(f"**S21:** {s21_ressonancia_db:.4f} dB")
-            st.write(f"**S21 (linear):** {s21_ressonancia_linear:.4f}")
+            st.write(f"**S21 (linear):** {s21_ressonancia_linear:.6f}")
         
         with col2:
             # Cálculo automático dos parâmetros usando a lógica correta
@@ -298,7 +321,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     **Método -3dB:**
                     - Largura de banda: {fwhm_db:.6f} GHz
                     - Fator Q: {Q_db:.2f}
-                    - Frequências: {freq_left_db:.4f} - {freq_right_db:.4f} GHz
+                    - Frequências: {freq_left_db:.6f} - {freq_right_db:.6f} GHz
                     """)
                 
                 with col_res2:
@@ -306,7 +329,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     **Método 1/√2:**
                     - Largura de banda: {fwhm_linear:.6f} GHz  
                     - Fator Q: {Q_linear:.2f}
-                    - Frequências: {freq_left_linear:.4f} - {freq_right_linear:.4f} GHz
+                    - Frequências: {freq_left_linear:.6f} - {freq_right_linear:.6f} GHz
                     """)
                 
                 if sensitivity is not None:
@@ -323,8 +346,8 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     
                     st.markdown(f"""
                     **Figura de Mérito (Com Amplitude):**
-                    - Método -3dB: {figure_of_merit_db:.6f} (Q × Sensibilidade × Amplitude)
-                    - Método 1/√2: {figure_of_merit_linear:.6f} (Q × Sensibilidade × Amplitude)
+                    - Método -3dB: {figure_of_merit_db:.6f} (Q × Sensibilidade × (1-Amplitude))
+                    - Método 1/√2: {figure_of_merit_linear:.6f} (Q × Sensibilidade × (1-Amplitude))
                     """)
                 
                 # Salvar resultado automaticamente em TXT
