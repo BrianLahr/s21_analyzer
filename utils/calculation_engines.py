@@ -2,7 +2,93 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from scipy import interpolate
+from scipy.signal import find_peaks
 from pathlib import Path
+
+def detect_auto_ressonances(df, min_depth_db=-3.0, min_prominence=1.0, min_distance_ghz=0.01):
+    """
+    Detecta automaticamente ressonâncias baseado em mínimos locais com critérios.
+    
+    Args:
+        df: DataFrame com colunas 'freq_ghz', 's21_db', 's21_linear'
+        min_depth_db: Profundidade mínima em dB (default: -3dB)
+        min_prominence: Prominência mínima do pico em dB
+        min_distance_ghz: Distância mínima entre ressonâncias em GHz
+    
+    Returns:
+        Lista de dicionários com ressonâncias detectadas
+    """
+    try:
+        # Extrair arrays
+        freq = df['freq_ghz'].values
+        s21_db = df['s21_db'].values
+        s21_linear = df['s21_linear'].values
+        
+        # Suavização opcional para reduzir ruído
+        from scipy.signal import savgol_filter
+        window_size = min(51, len(s21_db) // 10 * 2 + 1)  # Window size ímpar
+        if window_size > 5:
+            s21_db_smooth = savgol_filter(s21_db, window_size, 3)
+        else:
+            s21_db_smooth = s21_db
+        
+        # Encontrar mínimos (inverter sinal pois find_peaks busca máximos)
+        inverted_s21 = -s21_db_smooth
+        
+        # Calcular distância em pontos
+        freq_range = freq[-1] - freq[0]
+        min_distance_points = int(min_distance_ghz * len(freq) / freq_range)
+        min_distance_points = max(5, min_distance_points)  # Mínimo de 5 pontos
+        
+        # Encontrar picos (mínimos no S21 original)
+        peaks, properties = find_peaks(
+            inverted_s21,
+            prominence=min_prominence,
+            distance=min_distance_points,
+            height=-min_depth_db  # Altura mínima (invertida)
+        )
+        
+        # Filtrar ressonâncias válidas
+        valid_ressonances = []
+        for i, peak_idx in enumerate(peaks):
+            freq_ress = freq[peak_idx]
+            s21_val_db = s21_db[peak_idx]
+            s21_val_linear = s21_linear[peak_idx]
+            prominence_val = properties['prominences'][i]
+            
+            # Critérios de validação
+            if (s21_val_db < min_depth_db and  # Deve ser mais profundo que -3dB
+                prominence_val >= min_prominence and  # Prominência suficiente
+                is_valid_minimum(peak_idx, s21_db_smooth, freq)):  # Verificação adicional
+                
+                valid_ressonances.append({
+                    'frequencia': freq_ress,
+                    's21_db': s21_val_db,
+                    's21_linear': s21_val_linear,
+                    'prominence': prominence_val,
+                    'index': peak_idx
+                })
+        
+        # Ordenar por frequência
+        return sorted(valid_ressonances, key=lambda x: x['frequencia'])
+        
+    except Exception as e:
+        st.warning(f"⚠️ Erro na detecção automática: {e}")
+        return []
+
+def is_valid_minimum(peak_idx, s21_db, freq, window_size=5):
+    """
+    Verifica se o ponto é realmente um mínimo local válido.
+    """
+    n = len(s21_db)
+    left_start = max(0, peak_idx - window_size)
+    right_end = min(n, peak_idx + window_size + 1)
+    
+    # Verificar se é o ponto mais baixo na vizinhança
+    local_min = np.min(s21_db[left_start:right_end])
+    current_val = s21_db[peak_idx]
+    
+    return abs(current_val - local_min) < 0.1  # Deve ser muito próximo do mínimo local
 
 def manual_ressonance_identification(df, filename, param_id, params, param_cols, perm_col, 
                                    unique_combinations, temp_path):
@@ -25,6 +111,83 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
     s21_linear_interp = interp_func_linear(freq_interp)
     
     current_results = st.session_state[results_key].copy()
+    
+    # SEÇÃO DE DETECÇÃO AUTOMÁTICA
+    st.markdown("#### 🤖 Detecção Automática")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        min_depth = st.number_input(
+            "Profundidade mínima (dB)",
+            min_value=-50.0,
+            max_value=0.0,
+            value=-3.0,
+            step=0.5,
+            key=f"min_depth_{param_id}"
+        )
+    with col2:
+        min_prominence = st.number_input(
+            "Prominência mínima (dB)",
+            min_value=0.1,
+            max_value=10.0,
+            value=1.0,
+            step=0.1,
+            key=f"min_prom_{param_id}"
+        )
+    with col3:
+        min_distance = st.number_input(
+            "Distância mínima (GHz)",
+            min_value=0.001,
+            max_value=1.0,
+            value=0.01,
+            step=0.001,
+            key=f"min_dist_{param_id}"
+        )
+    
+    if st.button("🔍 Executar Detecção Automática", key=f"auto_detect_{param_id}"):
+        with st.spinner("Procurando ressonâncias..."):
+            auto_ressonances = detect_auto_ressonances(
+                df, min_depth, min_prominence, min_distance
+            )
+            
+            if auto_ressonances:
+                st.success(f"✅ Encontradas {len(auto_ressonances)} ressonâncias!")
+                
+                # Atualizar número de ressonâncias
+                st.session_state[f"num_{param_id}"] = len(auto_ressonances)
+                
+                # Atualizar resultados com as ressonâncias detectadas
+                current_results = []
+                for i, ress in enumerate(auto_ressonances):
+                    result = {
+                        'parametros': param_id,
+                        'ressonancia_num': i + 1,
+                        'frequencia_ressonancia_ghz': ress['frequencia'],
+                        's21_ressonancia_db': ress['s21_db'],
+                        's21_ressonancia_linear': ress['s21_linear'],
+                        'fwhm_3db_ghz': None,
+                        'Q_3db': None,
+                        'fwhm_linear_ghz': None,
+                        'Q_linear': None,
+                        'sensibilidade_ghz_sqrt_er': None,
+                        'figura_merito_3db': None,
+                        'figura_merito_linear': None,
+                        'figura_merito_normal_3db': None,
+                        'figura_merito_normal_linear': None
+                    }
+                    
+                    for col in param_cols:
+                        if col != '_dummy':
+                            result[col] = params[col]
+                    
+                    current_results.append(result)
+                
+                st.session_state[results_key] = current_results
+                st.rerun()
+            else:
+                st.warning("❌ Nenhuma ressonância encontrada com os critérios atuais.")
+    
+    st.markdown("---")
     
     # Número de ressonâncias a analisar
     num_ressonances = st.number_input(
@@ -53,8 +216,8 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 'sensibilidade_ghz_sqrt_er': None,
                 'figura_merito_3db': None,
                 'figura_merito_linear': None,
-                'figura_merito_normal_3db': None,  # Nova coluna
-                'figura_merito_normal_linear': None  # Nova coluna
+                'figura_merito_normal_3db': None,
+                'figura_merito_normal_linear': None
             })
     
     # Processar cada ressonância com cálculo automático
@@ -97,7 +260,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 freq_left_db, freq_right_db, fwhm_db, Q_db = bandwidth_result_db
                 freq_left_linear, freq_right_linear, fwhm_linear, Q_linear = bandwidth_result_linear
                 
-                # CORREÇÃO: Calcular ambas as figuras de mérito
+                # Calcular ambas as figuras de mérito
                 sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear = calculate_sensitivity_corrected(
                     freq_ressonancia, params, perm_col, unique_combinations, Q_db, Q_linear, s21_ressonancia_linear
                 )
@@ -116,8 +279,8 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     'sensibilidade_ghz_sqrt_er': sensitivity,
                     'figura_merito_3db': figure_of_merit_db,
                     'figura_merito_linear': figure_of_merit_linear,
-                    'figura_merito_normal_3db': figure_of_merit_normal_db,  # Nova coluna
-                    'figura_merito_normal_linear': figure_of_merit_normal_linear  # Nova coluna
+                    'figura_merito_normal_3db': figure_of_merit_normal_db,
+                    'figura_merito_normal_linear': figure_of_merit_normal_linear
                 }
                 
                 for col in param_cols:
