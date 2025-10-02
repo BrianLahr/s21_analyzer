@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  s21-analyzer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: s21-analyzer
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data:rw
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8501/_stcore/health', timeout=30)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Serviço opcional para desenvolvimento com hot-reload
+  s21-analyzer-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: s21-analyzer-dev
+    ports:
+      - "8502:8501"
+    volumes:
+      - ./data:/app/data:rw
+      - .:/app:rw  # Monta o código fonte para desenvolvimento
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - STREAMLIT_SERVER_WATCH_FILEs=true
+    command: ["streamlit", "run", "s21_analyzer_app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.runOnSave=true"]
+    restart: unless-stopped
