@@ -4,7 +4,7 @@ from pathlib import Path
 
 # Importar módulos
 from utils.file_handlers import handle_file_upload, display_file_preview
-from utils.data_processors import identify_columns, analyze_data
+from utils.data_processors import identify_columns, process_data
 from utils.plot_generators import plot_interactive_curve
 from utils.calculation_engines import manual_ressonance_identification
 
@@ -38,6 +38,13 @@ def main():
         margin: 1rem 0;
         border-left: 4px solid #1f77b4;
     }
+    .combination-section {
+        background-color: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        margin: 2rem 0;
+        border: 2px solid #e9ecef;
+    }
     </style>
     """, unsafe_allow_html=True)
     
@@ -48,12 +55,10 @@ def main():
     st.sidebar.title("ℹ️ Sobre")
     st.sidebar.info(
         "Esta aplicação analisa ressonâncias em dados S21 de arquivos CSV. "
-        "Plote os gráficos e identifique manualmente as ressonâncias para cálculo dos parâmetros."
+        "Para cada combinação de parâmetros, visualize o gráfico e identifique as ressonâncias."
     )
     
-    # Inicializar session_state de forma mais robusta
-    if 'analysis_started' not in st.session_state:
-        st.session_state.analysis_started = False
+    # Inicializar session_state
     if 'uploaded_file_data' not in st.session_state:
         st.session_state.uploaded_file_data = None
     if 'analysis_results' not in st.session_state:
@@ -76,70 +81,50 @@ def main():
             
             if file_changed:
                 # Resetar análise quando o arquivo muda
-                st.session_state.analysis_started = False
                 st.session_state.analysis_results = None
+                st.session_state.uploaded_file_data = {
+                    'name': uploaded_file.name,
+                    'df': df,
+                    'freq_col': None,
+                    's21_col': None,
+                    'param_cols': None,
+                    'perm_col': None
+                }
             
             # Mostrar informações do arquivo
             display_file_preview(df, uploaded_file)
             
-            # CORREÇÃO: Verificar se uploaded_file_data existe antes de acessar suas chaves
-            if (st.session_state.uploaded_file_data is None or 
-                st.session_state.uploaded_file_data.get('freq_col') is None):
+            # Identificar colunas (apenas se ainda não foram identificadas)
+            if (st.session_state.uploaded_file_data['freq_col'] is None or 
+                st.session_state.uploaded_file_data['s21_col'] is None):
                 
                 freq_col, s21_col, param_cols, perm_col = identify_columns(df)
-                
-                # Garantir que uploaded_file_data existe
-                if st.session_state.uploaded_file_data is None:
-                    st.session_state.uploaded_file_data = {}
                 
                 st.session_state.uploaded_file_data.update({
                     'freq_col': freq_col,
                     's21_col': s21_col,
                     'param_cols': param_cols,
-                    'perm_col': perm_col,
-                    'df': df,  # Armazenar o dataframe também
-                    'name': uploaded_file.name
+                    'perm_col': perm_col
                 })
             else:
-                # Usar dados existentes da session_state
                 freq_col = st.session_state.uploaded_file_data['freq_col']
                 s21_col = st.session_state.uploaded_file_data['s21_col']
                 param_cols = st.session_state.uploaded_file_data['param_cols']
                 perm_col = st.session_state.uploaded_file_data['perm_col']
-                # Usar o dataframe da session_state para consistência
-                df = st.session_state.uploaded_file_data['df']
             
             if freq_col and s21_col:
                 st.success(f"✅ Colunas identificadas: Frequência='{freq_col}', S21='{s21_col}'")
                 
-                # Botão para iniciar análise
-                if not st.session_state.analysis_started:
-                    col1, col2, col3 = st.columns([1, 2, 1])
-                    with col2:
-                        if st.button(
-                            "🚀 Plotar Gráficos e Identificar Ressonâncias", 
-                            type="primary",
-                            use_container_width=True,
-                            key="start_analysis"
-                        ):
-                            st.session_state.analysis_started = True
-                            st.rerun()
-                
-                # Se a análise já foi iniciada, mostrar os resultados
-                if st.session_state.analysis_started:
-                    # Usar um container para evitar recarregamento completo
-                    analysis_container = st.container()
-                    
-                    with analysis_container:
-                        with st.spinner("🔬 Processando dados... Isso pode levar alguns segundos"):
-                            if st.session_state.analysis_results is None:
-                                st.session_state.analysis_results = analyze_data(
-                                    df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col
-                                )
-                            else:
-                                # Reutilizar resultados existentes
-                                from utils.file_handlers import display_existing_analysis
-                                display_existing_analysis(st.session_state.analysis_results, uploaded_file.name)
+                # Processar dados e mostrar análise IMEDIATAMENTE (sem botão)
+                with st.spinner("🔬 Processando dados e gerando gráficos..."):
+                    if st.session_state.analysis_results is None:
+                        st.session_state.analysis_results = process_data(
+                            df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col
+                        )
+                    else:
+                        # Reutilizar resultados existentes
+                        from utils.file_handlers import display_existing_analysis
+                        display_existing_analysis(st.session_state.analysis_results, uploaded_file.name)
                 
             else:
                 st.error("❌ Não foi possível identificar colunas de frequência e S21 automaticamente.")
@@ -156,11 +141,10 @@ def main():
         st.info("👆 Faça upload de um arquivo CSV para iniciar a análise")
         
         # Resetar session_state quando não há arquivo
-        st.session_state.analysis_started = False
         st.session_state.uploaded_file_data = None
         st.session_state.analysis_results = None
         
-        # Botão para resetar completamente (similar ao seu exemplo)
+        # Botão para resetar completamente
         if st.button("🔄 Resetar Aplicação"):
             st.session_state.uploader_key += 1
             st.rerun()
