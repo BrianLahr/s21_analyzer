@@ -35,6 +35,12 @@ def identify_columns(df):
 def analyze_data(df, filename, freq_col, s21_col, param_cols, perm_col):
     """Função principal de análise"""
     
+    # CORREÇÃO: Usar session_state para controlar se já processamos os gráficos
+    analysis_key = f"analysis_done_{filename}"
+    
+    if analysis_key not in st.session_state:
+        st.session_state[analysis_key] = False
+    
     # Criar diretório temporário para resultados
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
@@ -57,35 +63,71 @@ def analyze_data(df, filename, freq_col, s21_col, param_cols, perm_col):
             unique_combinations = pd.DataFrame({'_dummy': [1]})
             param_cols = ['_dummy']
         
-        # Processar cada combinação
+        # CORREÇÃO: Separar a exibição dos gráficos da análise de ressonâncias
         all_results = []
         
-        for idx, (_, combo) in enumerate(unique_combinations.iterrows()):
-            if param_cols[0] != '_dummy':
-                mask = pd.Series([True] * len(df))
-                for col in param_cols:
-                    mask = mask & (df[col] == combo[col])
-                df_subset = df[mask].copy()
-                param_id = "_".join([f"{col}_{combo[col]}" for col in param_cols])
-                param_id = "".join(c for c in param_id if c.isalnum() or c in ('_', '-'))
-            else:
-                df_subset = df.copy()
-                param_id = "single_curve"
-                combo = {}
+        # Container para os gráficos (executado apenas uma vez)
+        graphs_container = st.container()
+        
+        with graphs_container:
+            # Plotar gráficos apenas se ainda não foram plotados
+            if not st.session_state[analysis_key]:
+                st.info("📊 **Gráficos das Curvas S21** - Identifique visualmente as ressonâncias")
+                
+                for idx, (_, combo) in enumerate(unique_combinations.iterrows()):
+                    if param_cols[0] != '_dummy':
+                        mask = pd.Series([True] * len(df))
+                        for col in param_cols:
+                            mask = mask & (df[col] == combo[col])
+                        df_subset = df[mask].copy()
+                        param_id = "_".join([f"{col}_{combo[col]}" for col in param_cols])
+                        param_id = "".join(c for c in param_id if c.isalnum() or c in ('_', '-'))
+                    else:
+                        df_subset = df.copy()
+                        param_id = "single_curve"
+                        combo = {}
+                    
+                    # Plotar gráfico (apenas uma vez)
+                    from utils.plot_generators import plot_interactive_curve
+                    plot_interactive_curve(df_subset, param_id, params=combo, param_cols=param_cols)
+                
+                # Marcar que os gráficos foram plotados
+                st.session_state[analysis_key] = True
+        
+        # CORREÇÃO: Container separado para análise de ressonâncias (sempre visível)
+        analysis_container = st.container()
+        
+        with analysis_container:
+            st.markdown("---")
+            st.info("🎯 **Identificação de Ressonâncias** - Insira as frequências identificadas nos gráficos")
             
-            # Processar esta curva
-            st.markdown(f"## 📈 Análise: {param_id}")
-            
-            # Plotar gráfico primeiro
-            from utils.plot_generators import plot_interactive_curve
-            plot_interactive_curve(df_subset, param_id, params=combo, param_cols=param_cols)
-            
-            # Seção para identificação manual de ressonâncias
-            from utils.calculation_engines import manual_ressonance_identification
-            results = manual_ressonance_identification(
-                df_subset, filename, param_id, combo, param_cols, perm_col, 
-                unique_combinations, temp_path
-            )
-            all_results.extend(results)
+            # Processar cada combinação para análise de ressonâncias
+            for idx, (_, combo) in enumerate(unique_combinations.iterrows()):
+                if param_cols[0] != '_dummy':
+                    mask = pd.Series([True] * len(df))
+                    for col in param_cols:
+                        mask = mask & (df[col] == combo[col])
+                    df_subset = df[mask].copy()
+                    param_id = "_".join([f"{col}_{combo[col]}" for col in param_cols])
+                    param_id = "".join(c for c in param_id if c.isalnum() or c in ('_', '-'))
+                else:
+                    df_subset = df.copy()
+                    param_id = "single_curve"
+                    combo = {}
+                
+                # Seção para identificação manual de ressonâncias (sempre disponível)
+                from utils.calculation_engines import manual_ressonance_identification
+                results = manual_ressonance_identification(
+                    df_subset, filename, param_id, combo, param_cols, perm_col, 
+                    unique_combinations, temp_path
+                )
+                all_results.extend(results)
         
         return temp_path, all_results
+
+# CORREÇÃO: Função para resetar o estado da análise (chamada quando o arquivo muda)
+def reset_analysis_state(filename):
+    """Reseta o estado da análise para um arquivo específico"""
+    analysis_key = f"analysis_done_{filename}"
+    if analysis_key in st.session_state:
+        del st.session_state[analysis_key]
