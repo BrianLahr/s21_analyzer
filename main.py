@@ -50,6 +50,17 @@ def export_analysis(temp_path, all_results, filename):
 
     results_df = pd.DataFrame(all_results)
 
+    # CORREÇÃO: Ordenar por "sample_height [mm]" se a coluna existir
+    if 'sample_height [mm]' in results_df.columns:
+        try:
+            # Converter para numérico para ordenação correta
+            results_df['sample_height [mm]'] = pd.to_numeric(results_df['sample_height [mm]'], errors='coerce')
+            # Ordenar pelo sample_height
+            results_df = results_df.sort_values('sample_height [mm]')
+            st.info("📊 Planilha ordenada por 'sample_height [mm]'")
+        except Exception as e:
+            st.warning(f"⚠️ Não foi possível ordenar por 'sample_height [mm]': {e}")
+    
     # Limpar diretório temporário
     for file in temp_path.glob("*"):
         if file.is_file():
