@@ -436,8 +436,8 @@ def calculate_sensitivity_corrected(freq_ressonancia, params, perm_col, unique_c
             figure_of_merit_normal_linear = Q_linear * sensitivity
             
             # Figura de mérito com amplitude (Q × Sensibilidade × Amplitude)
-            figure_of_merit_db = Q_db * sensitivity * amplitude_linear
-            figure_of_merit_linear = Q_linear * sensitivity * amplitude_linear
+            figure_of_merit_db = Q_db * sensitivity * (1-amplitude_linear)
+            figure_of_merit_linear = Q_linear * sensitivity * (1-amplitude_linear)
             
             return sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear
         
@@ -456,6 +456,7 @@ def generate_txt_result_corrected(result, param_cols, params):
     content += f"Frequência de ressonância: {result['frequencia_ressonancia_ghz']:.6f} GHz\n"
     content += f"S21 na ressonância: {result['s21_ressonancia_db']:.6f} dB\n"
     content += f"S21 na ressonância (linear): {result['s21_ressonancia_linear']:.6f}\n\n"
+    content += f"Profundidade de S21 na ressonância (linear): {(1-result['s21_ressonancia_linear']):.6f}\n\n"
     
     # Parâmetros
     if param_cols[0] != '_dummy':
