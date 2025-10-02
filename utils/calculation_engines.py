@@ -220,27 +220,42 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
             key=f"method_{param_id}"
         )
     
+    # CORREÇÃO: Usar uma chave única para controlar o estado da detecção
+    detection_key = f"detection_done_{param_id}"
+    
     if st.button("🔍 Executar Detecção Automática", key=f"auto_detect_{param_id}"):
+        # Marcar que a detecção foi iniciada
+        st.session_state[detection_key] = True
+        
         with st.spinner("Procurando ressonâncias..."):
             auto_ressonances = detect_auto_ressonances(
                 df, min_depth, min_prominence, min_distance
             )
             
-            if auto_ressonances:
-                # Mostrar estatísticas da detecção
-                original_count = sum(1 for r in auto_ressonances if r['use_original'])
-                refined_count = len(auto_ressonances) - original_count
-                
-                st.success(f"✅ Encontradas {len(auto_ressonances)} ressonâncias!")
-                st.info(f"📊 Estatísticas: {refined_count} refinadas, {original_count} originais")
-                
-                # Mostrar detalhes das ressonâncias detectadas
-                with st.expander("📋 Detalhes das Ressonâncias Detectadas"):
-                    for i, ress in enumerate(auto_ressonances):
-                        method = "Original" if ress['use_original'] else "Refinada"
-                        st.write(f"**Ressonância {i+1}:** {ress['frequencia']:.6f} GHz "
-                               f"(S21: {ress['s21_db']:.3f} dB, Método: {method})")
-                
+            # CORREÇÃO: Armazenar resultados temporariamente
+            st.session_state[f"auto_results_{param_id}"] = auto_ressonances
+    
+    # CORREÇÃO: Mostrar resultados APÓS a detecção, sem recarregar imediatamente
+    if st.session_state.get(detection_key, False):
+        auto_ressonances = st.session_state.get(f"auto_results_{param_id}", [])
+        
+        if auto_ressonances:
+            # Mostrar estatísticas da detecção
+            original_count = sum(1 for r in auto_ressonances if r['use_original'])
+            refined_count = len(auto_ressonances) - original_count
+            
+            st.success(f"✅ Encontradas {len(auto_ressonances)} ressonâncias!")
+            st.info(f"📊 Estatísticas: {refined_count} refinadas, {original_count} originais")
+            
+            # Mostrar detalhes das ressonâncias detectadas
+            with st.expander("📋 Detalhes das Ressonâncias Detectadas"):
+                for i, ress in enumerate(auto_ressonances):
+                    method = "Original" if ress['use_original'] else "Refinada"
+                    st.write(f"**Ressonância {i+1}:** {ress['frequencia']:.6f} GHz "
+                           f"(S21: {ress['s21_db']:.3f} dB, Método: {method})")
+            
+            # Botão para aplicar os resultados
+            if st.button("🔄 Aplicar Ressonâncias Detectadas", key=f"apply_{param_id}"):
                 # Atualizar número de ressonâncias
                 st.session_state[f"num_{param_id}"] = len(auto_ressonances)
                 
@@ -272,12 +287,191 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     current_results.append(result)
                 
                 st.session_state[results_key] = current_results
+                
+                # Limpar estado temporário
+                st.session_state[detection_key] = False
+                if f"auto_results_{param_id}" in st.session_state:
+                    del st.session_state[f"auto_results_{param_id}"]
+                
                 st.rerun()
-            else:
-                st.warning("❌ Nenhuma ressonância encontrada com os critérios atuais.")
-                st.info("💡 Tente ajustar: Reduzir profundidade mínima ou prominência")
+            
+            # Botão para descartar resultados
+            if st.button("❌ Descartar Resultados", key=f"discard_{param_id}"):
+                st.session_state[detection_key] = False
+                if f"auto_results_{param_id}" in st.session_state:
+                    del st.session_state[f"auto_results_{param_id}"]
+                st.rerun()
+                
+        elif auto_ressonances == []:  # Lista vazia significa que não encontrou nada
+            st.warning("❌ Nenhuma ressonância encontrada com os critérios atuais.")
+            st.info("💡 Tente ajustar: Reduzir profundidade mínima ou prominência")
+            
+            # Botão para tentar novamente
+            if st.button("🔄 Tentar Novamente", key=f"retry_{param_id}"):
+                st.session_state[detection_key] = False
+                if f"auto_results_{param_id}" in st.session_state:
+                    del st.session_state[f"auto_results_{param_id}"]
+                st.rerun()
     
     st.markdown("---")
+    
+    # Número de ressonâncias a analisar
+    num_ressonances = st.number_input(
+        f"Quantas ressonâncias deseja analisar em {param_id}?",
+        min_value=0,
+        max_value=50,
+        value=len(current_results),  # CORREÇÃO: usar sempre o length atual
+        key=f"num_{param_id}"
+    )
+    
+    # Ajustar lista de resultados se necessário
+    if len(current_results) > num_ressonances:
+        current_results = current_results[:num_ressonances]
+    elif len(current_results) < num_ressonances:
+        for i in range(len(current_results), num_ressonances):
+            # CORREÇÃO: Usar valor mais razoável para nova ressonância
+            default_freq = freq_min + (i + 1) * (freq_max - freq_min) / (num_ressonances + 1)
+            current_results.append({
+                'parametros': param_id,
+                'ressonancia_num': i + 1,
+                'frequencia_ressonancia_ghz': default_freq,
+                's21_ressonancia_db': None,
+                's21_ressonancia_linear': None,
+                'fwhm_3db_ghz': None,
+                'Q_3db': None,
+                'fwhm_linear_ghz': None,
+                'Q_linear': None,
+                'sensibilidade_ghz_sqrt_er': None,
+                'figura_merito_3db': None,
+                'figura_merito_linear': None,
+                'figura_merito_normal_3db': None,
+                'figura_merito_normal_linear': None
+            })
+    
+    # Processar cada ressonância com cálculo automático
+    for i in range(num_ressonances):
+        st.markdown(f"##### Ressonância {i+1}")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # CORREÇÃO: Garantir que o valor mostrado seja atualizado
+            current_freq = current_results[i]['frequencia_ressonancia_ghz']
+            
+            # Campo de frequência - cálculo automático ao alterar
+            freq_ressonancia = st.number_input(
+                f"Frequência de ressonância (GHz)",
+                min_value=float(freq_min),
+                max_value=float(freq_max),
+                value=float(current_freq),
+                step=0.001,  # Passo menor para mais precisão
+                format="%.6f",  # Mais casas decimais
+                key=f"freq_{param_id}_{i}"
+            )
+            
+            # Calcular S21 atualizado para a frequência selecionada
+            s21_ressonancia_db = float(interp_func_db(freq_ressonancia))
+            s21_ressonancia_linear = float(interp_func_linear(freq_ressonancia))
+            
+            st.write(f"**Frequência:** {freq_ressonancia:.6f} GHz")
+            st.write(f"**S21:** {s21_ressonancia_db:.4f} dB")
+            st.write(f"**S21 (linear):** {s21_ressonancia_linear:.6f}")
+        
+        with col2:
+            # Cálculo automático dos parâmetros usando a lógica correta
+            bandwidth_result_db = find_bandwidth_points_corrected(
+                freq_interp, s21_db_interp, freq_ressonancia, interp_func_db, is_db=True
+            )
+            
+            bandwidth_result_linear = find_bandwidth_points_corrected(
+                freq_interp, s21_linear_interp, freq_ressonancia, interp_func_linear, is_db=False
+            )
+            
+            if bandwidth_result_db and bandwidth_result_linear:
+                freq_left_db, freq_right_db, fwhm_db, Q_db = bandwidth_result_db
+                freq_left_linear, freq_right_linear, fwhm_linear, Q_linear = bandwidth_result_linear
+                
+                # Calcular ambas as figuras de mérito
+                sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear = calculate_sensitivity_corrected(
+                    freq_ressonancia, params, perm_col, unique_combinations, Q_db, Q_linear, s21_ressonancia_linear
+                )
+                
+                # Atualizar resultado automaticamente
+                result = {
+                    'parametros': param_id,
+                    'ressonancia_num': i + 1,
+                    'frequencia_ressonancia_ghz': freq_ressonancia,
+                    's21_ressonancia_db': s21_ressonancia_db,
+                    's21_ressonancia_linear': s21_ressonancia_linear,
+                    'fwhm_3db_ghz': fwhm_db,
+                    'Q_3db': Q_db,
+                    'fwhm_linear_ghz': fwhm_linear,
+                    'Q_linear': Q_linear,
+                    'sensibilidade_ghz_sqrt_er': sensitivity,
+                    'figura_merito_3db': figure_of_merit_db,
+                    'figura_merito_linear': figure_of_merit_linear,
+                    'figura_merito_normal_3db': figure_of_merit_normal_db,
+                    'figura_merito_normal_linear': figure_of_merit_normal_linear
+                }
+                
+                for col in param_cols:
+                    if col != '_dummy':
+                        result[col] = params[col]
+                
+                current_results[i] = result
+                
+                # Mostrar resultados calculados automaticamente
+                st.markdown("**📊 Parâmetros Calculados:**")
+                
+                col_res1, col_res2 = st.columns(2)
+                with col_res1:
+                    st.markdown(f"""
+                    **Método -3dB:**
+                    - Largura de banda: {fwhm_db:.6f} GHz
+                    - Fator Q: {Q_db:.2f}
+                    - Frequências: {freq_left_db:.6f} - {freq_right_db:.6f} GHz
+                    """)
+                
+                with col_res2:
+                    st.markdown(f"""
+                    **Método 1/√2:**
+                    - Largura de banda: {fwhm_linear:.6f} GHz  
+                    - Fator Q: {Q_linear:.2f}
+                    - Frequências: {freq_left_linear:.6f} - {freq_right_linear:.6f} GHz
+                    """)
+                
+                if sensitivity is not None:
+                    st.markdown(f"""
+                    **Sensibilidade:**
+                    - Sensibilidade: {sensitivity:.6f} GHz/√εr
+                    """)
+                    
+                    st.markdown(f"""
+                    **Figura de Mérito (Normal):**
+                    - Método -3dB: {figure_of_merit_normal_db:.6f} (Q × Sensibilidade)
+                    - Método 1/√2: {figure_of_merit_normal_linear:.6f} (Q × Sensibilidade)
+                    """)
+                    
+                    st.markdown(f"""
+                    **Figura de Mérito (Com Amplitude):**
+                    - Método -3dB: {figure_of_merit_db:.6f} (Q × Sensibilidade × (1-Amplitude))
+                    - Método 1/√2: {figure_of_merit_linear:.6f} (Q × Sensibilidade × (1-Amplitude))
+                    """)
+                
+                # Salvar resultado automaticamente em TXT
+                txt_content = generate_txt_result_corrected(result, param_cols, params)
+                txt_filename = f"resultado_{Path(filename).stem}_{param_id}_ressonancia_{i+1}.txt"
+                txt_path = temp_path / txt_filename
+                with open(txt_path, 'w') as f:
+                    f.write(txt_content)
+                    
+            else:
+                st.warning("⚠️ Não foi possível calcular os parâmetros para esta frequência.")
+        
+        st.markdown("---")
+    
+    # Atualizar session_state com resultados
+    st.session_state[results_key] = current_results
     
     return current_results
 
