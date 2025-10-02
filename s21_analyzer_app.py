@@ -315,15 +315,23 @@ def process_s21_curve(df, filename, param_id, params, param_cols, perm_col,
             st.markdown(f"##### 🔬 Ressonância {i+1}: {freq_ressonancia:.4f} GHz")
             
             # Análise -3dB
-            freq_left_db, freq_right_db, fwhm_db, Q_db = find_bandwidth_points(
+            bandwidth_result_db = find_bandwidth_points(
                 freq_interp, s21_db_interp, freq_ressonancia, s21_ressonancia_db, 
                 s21_ressonancia_db - 3.0)
             
             # Análise 1/√2
             target_linear = s21_ressonancia_linear / np.sqrt(2)
-            freq_left_linear, freq_right_linear, fwhm_linear, Q_linear = find_bandwidth_points(
+            bandwidth_result_linear = find_bandwidth_points(
                 freq_interp, s21_linear_interp, freq_ressonancia, s21_ressonancia_linear, 
                 target_linear, is_linear=True)
+            
+            # Verificar se ambas as análises foram bem sucedidas
+            if bandwidth_result_db is None or bandwidth_result_linear is None:
+                st.warning(f"⚠️ Não foi possível calcular largura de banda para esta ressonância. A curva pode ser muito plana.")
+                continue
+                
+            freq_left_db, freq_right_db, fwhm_db, Q_db = bandwidth_result_db
+            freq_left_linear, freq_right_linear, fwhm_linear, Q_linear = bandwidth_result_linear
             
             # Calcular sensibilidade se aplicável
             sensitivity, figure_of_merit_db, figure_of_merit_linear = calculate_sensitivity(
@@ -361,7 +369,9 @@ def process_s21_curve(df, filename, param_id, params, param_cols, perm_col,
                 st.markdown(f"""
                 <div class="result-card">
                 <b>Largura de banda:</b> {fwhm_db:.6f} GHz<br>
-                <b>Fator Q:</b> {Q_db:.2f}
+                <b>Fator Q:</b> {Q_db:.2f}<br>
+                <b>Frequência esquerda:</b> {freq_left_db:.6f} GHz<br>
+                <b>Frequência direita:</b> {freq_right_db:.6f} GHz
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -370,7 +380,9 @@ def process_s21_curve(df, filename, param_id, params, param_cols, perm_col,
                 st.markdown(f"""
                 <div class="result-card">
                 <b>Largura de banda:</b> {fwhm_linear:.6f} GHz<br>
-                <b>Fator Q:</b> {Q_linear:.2f}
+                <b>Fator Q:</b> {Q_linear:.2f}<br>
+                <b>Frequência esquerda:</b> {freq_left_linear:.6f} GHz<br>
+                <b>Frequência direita:</b> {freq_right_linear:.6f} GHz
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -405,6 +417,7 @@ def find_bandwidth_points(freq, y_values, center_freq, center_value, target, is_
         crossings = []
         for i in range(len(freq) - 1):
             if (y[i] - target_val) * (y[i+1] - target_val) < 0:
+                # Interpolação linear para encontrar o ponto exato
                 x1, x2 = freq[i], freq[i+1]
                 y1, y2 = y[i], y[i+1]
                 x_cross = x1 + (target_val - y1) * (x2 - x1) / (y2 - y1)
@@ -414,44 +427,66 @@ def find_bandwidth_points(freq, y_values, center_freq, center_value, target, is_
     crossings = find_crossings(freq, y_values, target)
     
     if len(crossings) < 2:
-        return None, None, None, None
+        st.warning(f"❌ Apenas {len(crossings)} ponto(s) de cruzamento encontrado(s). Necessário 2 pontos para calcular largura de banda.")
+        return None
     
-    # Encontrar cruzamentos mais próximos do centro
+    # Encontrar os dois cruzamentos mais próximos da frequência de ressonância
     crossings_sorted = sorted(crossings, key=lambda x: abs(x - center_freq))
-    left_freq = min(crossings_sorted[0], crossings_sorted[1])
-    right_freq = max(crossings_sorted[0], crossings_sorted[1])
     
-    bandwidth = abs(right_freq - left_freq)
-    Q = center_freq / bandwidth if bandwidth > 0 else float('inf')
+    # Pegar os dois mais próximos (pode haver mais de 2 cruzamentos em curvas complexas)
+    if len(crossings_sorted) >= 2:
+        freq_left = min(crossings_sorted[0], crossings_sorted[1])
+        freq_right = max(crossings_sorted[0], crossings_sorted[1])
+    else:
+        return None
     
-    return left_freq, right_freq, bandwidth, Q
+    bandwidth = abs(freq_right - freq_left)
+    
+    # Evitar divisão por zero
+    if bandwidth > 0:
+        Q = center_freq / bandwidth
+    else:
+        Q = float('inf')
+        st.warning("⚠️ Largura de banda zero detectada - verifique os dados")
+    
+    return freq_left, freq_right, bandwidth, Q
 
 def calculate_sensitivity(freq_ressonancia, params, perm_col, unique_combinations, 
                          Q_db, Q_linear, amplitude_linear):
     """Calcula sensibilidade e figura de mérito"""
     
-    if not perm_col or perm_col not in params:
+    # Verificar se temos todos os valores necessários
+    if (Q_db is None or Q_linear is None or amplitude_linear is None or 
+        not perm_col or perm_col not in params):
         return None, None, None
     
-    current_perm = params[perm_col]
-    unique_perms = sorted(unique_combinations[perm_col].unique())
-    
-    if len(unique_perms) < 2:
+    try:
+        current_perm = params[perm_col]
+        unique_perms = sorted(unique_combinations[perm_col].unique())
+        
+        if len(unique_perms) < 2:
+            return None, None, None
+        
+        current_index = unique_perms.index(current_perm)
+        
+        if current_index < len(unique_perms) - 1:
+            next_perm = unique_perms[current_index + 1]
+            sqrt_diff = abs(np.sqrt(next_perm) - np.sqrt(current_perm))
+            
+            if sqrt_diff > 0:
+                sensitivity = freq_ressonancia / sqrt_diff
+            else:
+                sensitivity = 0
+            
+            figure_of_merit_db = Q_db * sensitivity * amplitude_linear
+            figure_of_merit_linear = Q_linear * sensitivity * amplitude_linear
+            
+            return sensitivity, figure_of_merit_db, figure_of_merit_linear
+        
         return None, None, None
-    
-    current_index = unique_perms.index(current_perm)
-    
-    if current_index < len(unique_perms) - 1:
-        next_perm = unique_perms[current_index + 1]
-        sqrt_diff = abs(np.sqrt(next_perm) - np.sqrt(current_perm))
-        sensitivity = freq_ressonancia / sqrt_diff if sqrt_diff > 0 else 0
-        
-        figure_of_merit_db = Q_db * sensitivity * amplitude_linear
-        figure_of_merit_linear = Q_linear * sensitivity * amplitude_linear
-        
-        return sensitivity, figure_of_merit_db, figure_of_merit_linear
-    
-    return None, None, None
+    except (ValueError, IndexError, TypeError) as e:
+        st.warning(f"⚠️ Não foi possível calcular sensibilidade: {e}")
+        return None, None, None
 
 def plot_curve_with_peaks(df, freq_interp, s21_db_interp, s21_linear_interp, peaks, 
                          peak_freqs, param_id, params, param_cols):
