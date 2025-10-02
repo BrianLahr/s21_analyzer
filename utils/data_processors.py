@@ -33,9 +33,15 @@ def identify_columns(df: pd.DataFrame):
     return freq_col, s21_col, param_cols, perm_col
 
 
+import streamlit as st
+import pandas as pd
+import tempfile
+from pathlib import Path
+
 def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, param_cols: list, perm_col: str):
     """Processa os dados e retorna (temp_path, all_results).
     Cria diretório temporário persistente para salvar arquivos da análise.
+    Preserva resultados anteriores no session_state.
     """
 
     # Criar pasta temporária dedicada
@@ -69,6 +75,13 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
             param_id = "single_curve"
             combo = {}
 
+        # Recupera resultados anteriores do session_state, se existirem
+        results_key = f"results_{param_id}"
+        if results_key in st.session_state:
+            previous_results = st.session_state[results_key]
+        else:
+            previous_results = []
+
         # Container da análise
         with st.container():
             st.markdown(f'<div class="combination-section">', unsafe_allow_html=True)
@@ -81,16 +94,21 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
             # Plotar curva
             plot_interactive_curve(df_subset, param_id, params=combo, param_cols=param_cols)
 
-            # Identificação manual de ressonâncias
+            # Identificação manual de ressonâncias, preservando resultados anteriores
             results = manual_ressonance_identification(
                 df_subset, filename, param_id, combo, param_cols, perm_col,
                 unique_combinations, temp_path
             )
+
+            # Atualiza session_state com resultados recentes
+            st.session_state[results_key] = results
+
             all_results.extend(results)
 
             st.markdown('</div>', unsafe_allow_html=True)
 
     return temp_path, all_results
+
 
 
 def reset_analysis_state(filename: str):
