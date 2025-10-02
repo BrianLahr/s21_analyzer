@@ -39,23 +39,16 @@ import tempfile
 from pathlib import Path
 
 def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, param_cols: list, perm_col: str):
-    """Processa os dados e retorna (temp_path, all_results).
-    Cria diretório temporário persistente para salvar arquivos da análise.
-    Preserva resultados anteriores no session_state.
+    """Processa dados e plota gráficos, preservando resultados anteriores.
+    Não realiza exportação automática.
     """
-
-    # Criar pasta temporária dedicada
-    temp_dir = tempfile.mkdtemp(prefix=f"analisador_s21_{Path(filename).stem}_")
-    temp_path = Path(temp_dir)
 
     # Padronizar colunas principais
     df = df.rename(columns={freq_col: 'freq_ghz', s21_col: 's21_db'})
     df['s21_linear'] = 10 ** (df['s21_db'] / 20)
 
-    # Identificar combinações de parâmetros
     if param_cols:
         unique_combinations = df[param_cols].drop_duplicates()
-        st.write(f"**📊 Combinações de parâmetros encontradas:** {len(unique_combinations)}")
     else:
         unique_combinations = pd.DataFrame({'_dummy': [1]})
         param_cols = ['_dummy']
@@ -75,39 +68,26 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
             param_id = "single_curve"
             combo = {}
 
-        # Recupera resultados anteriores do session_state, se existirem
         results_key = f"results_{param_id}"
-        if results_key in st.session_state:
-            previous_results = st.session_state[results_key]
-        else:
-            previous_results = []
+        if results_key not in st.session_state:
+            st.session_state[results_key] = []
 
-        # Container da análise
-        with st.container():
-            st.markdown(f'<div class="combination-section">', unsafe_allow_html=True)
-            st.markdown(f"## 📈 Análise: {param_id}")
+        # Plotar gráfico interativo
+        from utils.plot_generators import plot_interactive_curve
+        plot_interactive_curve(df_subset, param_id, params=combo, param_cols=param_cols)
 
-            # Importações locais para evitar dependências globais quebradas
-            from utils.plot_generators import plot_interactive_curve
-            from utils.calculation_engines import manual_ressonance_identification
+        # Identificação manual de ressonâncias
+        from utils.calculation_engines import manual_ressonance_identification
+        results = manual_ressonance_identification(
+            df_subset, filename, param_id, combo, param_cols, perm_col,
+            unique_combinations, Path(tempfile.gettempdir())  # temp_path para TXT pode ser global
+        )
 
-            # Plotar curva
-            plot_interactive_curve(df_subset, param_id, params=combo, param_cols=param_cols)
+        st.session_state[results_key] = results
+        all_results.extend(results)
 
-            # Identificação manual de ressonâncias, preservando resultados anteriores
-            results = manual_ressonance_identification(
-                df_subset, filename, param_id, combo, param_cols, perm_col,
-                unique_combinations, temp_path
-            )
+    return all_results
 
-            # Atualiza session_state com resultados recentes
-            st.session_state[results_key] = results
-
-            all_results.extend(results)
-
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    return temp_path, all_results
 
 
 

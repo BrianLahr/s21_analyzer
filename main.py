@@ -1,75 +1,101 @@
+import streamlit as st
 import pandas as pd
 from pathlib import Path
-import streamlit as st
+import tempfile
+import shutil
+import zipfile
 
-# Imports locais
-from utils.file_handlers import handle_file_upload, display_file_preview, display_existing_analysis
+# ======================
+# Imports de módulos locais
+# ======================
+from utils.file_handlers import handle_file_upload, display_file_preview
 from utils.data_processors import identify_columns, process_data
 from utils.plot_generators import plot_interactive_curve
 from utils.calculation_engines import manual_ressonance_identification
 
 
 # ======================
-# Funções auxiliares
+# Setup e UI
 # ======================
 def setup_ui():
-    """Configuração inicial de layout, CSS e sidebar."""
+    """Configuração inicial de layout e CSS"""
     st.set_page_config(
-        page_title="Analisador S21", 
-        page_icon="📊", 
+        page_title="Analisador S21",
+        page_icon="📊",
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    
-    # CSS customizado
+
     custom_css = """
     <style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .result-card {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem 0;
-    }
-    .ressonance-input {
-        background-color: #e8f4fd;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 1rem 0;
-        border-left: 4px solid #1f77b4;
-    }
-    .combination-section {
-        background-color: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 0.5rem;
-        margin: 2rem 0;
-        border: 2px solid #e9ecef;
-    }
+    .main-header { font-size: 2.5rem; color: #1f77b4; text-align: center; margin-bottom: 2rem; }
+    .result-card { background-color: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; }
+    .ressonance-input { background-color: #e8f4fd; padding: 1rem; border-radius: 0.5rem; margin: 1rem 0; border-left: 4px solid #1f77b4; }
+    .combination-section { background-color: #f8f9fa; padding: 1.5rem; border-radius: 0.5rem; margin: 2rem 0; border: 2px solid #e9ecef; }
     </style>
     """
     st.markdown(custom_css, unsafe_allow_html=True)
-    
-    # Header
     st.markdown('<h1 class="main-header">📊 Analisador de Parâmetros S21</h1>', unsafe_allow_html=True)
     st.markdown("---")
-    
+
     # Sidebar
     st.sidebar.title("ℹ️ Sobre")
     st.sidebar.info(
-        "Esta aplicação analisa ressonâncias em dados S21 de arquivos CSV. "
-        "Para cada combinação de parâmetros, visualize o gráfico e identifique as ressonâncias."
+        "Esta aplicação analisa ressonâncias em dados S21 de arquivos CSV.\n"
+        "Visualize os gráficos e identifique manualmente as ressonâncias antes de exportar."
     )
 
 
+# ======================
+# Reset de aplicação
+# ======================
 def reset_app():
-    """Resetar completamente o estado da aplicação."""
-    st.session_state.uploader_key += 1
+    """Reset completo do estado da aplicação"""
+    st.session_state.clear()
     st.rerun()
+
+
+# ======================
+# Exportação de resultados
+# ======================
+def export_analysis(temp_path, all_results, filename):
+    """Gera arquivos Excel e ZIP para download"""
+    if not all_results:
+        st.warning("⚠️ Nenhuma ressonância calculada para exportar.")
+        return
+
+    results_df = pd.DataFrame(all_results)
+
+    # Limpar diretório temporário
+    for file in temp_path.glob("*"):
+        if file.is_file():
+            file.unlink()
+        elif file.is_dir():
+            shutil.rmtree(file)
+
+    # Salvar Excel
+    excel_path = temp_path / f"resultados_completos_{Path(filename).stem}.xlsx"
+    with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+        results_df.to_excel(writer, sheet_name='Resultados', index=False)
+
+    # Criar ZIP
+    zip_path = temp_path / f"resultados_analise_s21_{Path(filename).stem}.zip"
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        zip_file.write(excel_path, excel_path.name)
+        for txt_file in temp_path.glob("*.txt"):
+            zip_file.write(txt_file, txt_file.name)
+
+    # Botão de download
+    with open(zip_path, 'rb') as f:
+        zip_data = f.read()
+    st.download_button(
+        label="📥 Baixar Todos os Resultados (ZIP)",
+        data=zip_data,
+        file_name=zip_path.name,
+        mime="application/zip",
+        use_container_width=True
+    )
+    st.success(f"✅ Exportação concluída! Total de {len(all_results)} ressonâncias.")
 
 
 # ======================
@@ -77,7 +103,7 @@ def reset_app():
 # ======================
 def main():
     setup_ui()
-    
+
     # Inicializar session_state
     if 'uploaded_file_data' not in st.session_state:
         st.session_state.uploaded_file_data = None
@@ -85,22 +111,19 @@ def main():
         st.session_state.analysis_results = None
     if 'uploader_key' not in st.session_state:
         st.session_state.uploader_key = 0
-    
+
     # Upload do arquivo
     uploaded_file = st.file_uploader(
-        "**Selecione o arquivo CSV**", 
+        "**Selecione o arquivo CSV**",
         type=['csv'],
-        help="Arquivo CSV contendo dados de frequência e S21",
         key=f"file_uploader_{st.session_state.uploader_key}"
     )
-    
-    if uploaded_file is not None:
+
+    if uploaded_file:
         try:
-            # Usar file_handler para processar upload
+            # Processa upload
             df, file_changed = handle_file_upload(uploaded_file, st.session_state.uploaded_file_data)
-            
             if file_changed:
-                # Resetar análise quando o arquivo muda
                 st.session_state.analysis_results = None
                 st.session_state.uploaded_file_data = {
                     'name': uploaded_file.name,
@@ -110,11 +133,11 @@ def main():
                     'param_cols': None,
                     'perm_col': None
                 }
-            
-            # Mostrar informações do arquivo
+
+            # Preview do arquivo
             display_file_preview(df, uploaded_file)
-            
-            # Identificar colunas se necessário
+
+            # Identificação de colunas
             data_info = st.session_state.uploaded_file_data
             if data_info['freq_col'] is None or data_info['s21_col'] is None:
                 freq_col, s21_col, param_cols, perm_col = identify_columns(df)
@@ -129,49 +152,53 @@ def main():
                 s21_col = data_info['s21_col']
                 param_cols = data_info['param_cols']
                 perm_col = data_info['perm_col']
-            
-            if freq_col and s21_col:
-                st.success(f"✅ Colunas identificadas: Frequência='{freq_col}', S21='{s21_col}'")
-                
-                # Processar dados e mostrar análise
-                with st.spinner("🔬 Processando dados e gerando gráficos..."):
-                    if st.session_state.analysis_results is None:
-                        st.session_state.analysis_results = process_data(
-                            df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col
-                        )
-                    else:
-                        display_existing_analysis(st.session_state.analysis_results, uploaded_file.name)
-            else:
+
+            if not freq_col or not s21_col:
                 st.error("❌ Não foi possível identificar colunas de frequência e S21 automaticamente.")
-                if not freq_col:
-                    st.error("Coluna de frequência não encontrada. Procure por 'freq', 'frequency'.")
-                if not s21_col:
-                    st.error("Coluna S21 não encontrada. Procure por 's21', 'S(2,1)', 'dB(S(2,1))'.")
-                
+                return
+            st.success(f"✅ Colunas identificadas: Frequência='{freq_col}', S21='{s21_col}'")
+
+            # Processamento de dados (somente uma vez)
+            if st.session_state.analysis_results is None:
+                st.session_state.analysis_results = process_data(
+                    df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col
+                )
+
+            temp_path, all_results = st.session_state.analysis_results
+
+            # Para cada curva, mostrar gráfico e permitir identificação manual
+            for results_key in st.session_state:
+                if results_key.startswith("results_"):
+                    manual_ressonance_identification_container = st.container()
+                    with manual_ressonance_identification_container:
+                        current_results = st.session_state[results_key]
+                        param_id = results_key.replace("results_", "")
+                        # Obter subset de parâmetros
+                        params = {}
+                        if param_cols and param_cols[0] != "_dummy":
+                            for col in param_cols:
+                                params[col] = current_results[0].get(col, None)
+                        plot_interactive_curve(df, param_id, params, param_cols)
+                        st.session_state[results_key] = manual_ressonance_identification(
+                            df, uploaded_file.name, param_id, params, param_cols, perm_col, None, temp_path
+                        )
+
+            # Botão de exportação
+            if st.button("📦 Gerar Arquivos e .ZIP"):
+                all_results_combined = []
+                for results_key in st.session_state:
+                    if results_key.startswith("results_"):
+                        all_results_combined.extend(st.session_state[results_key])
+                export_analysis(temp_path, all_results_combined, uploaded_file.name)
+
         except Exception as e:
-            st.error(f"❌ Erro ao processar arquivo: {str(e)}")
-            st.info("💡 Dica: Verifique se o arquivo é um CSV válido e se está corretamente formatado.")
+            st.error(f"❌ Erro ao processar arquivo: {e}")
     else:
-        # Tela inicial
         st.info("👆 Faça upload de um arquivo CSV para iniciar a análise")
-        
-        # Resetar session_state quando não há arquivo
-        st.session_state.uploaded_file_data = None
         st.session_state.analysis_results = None
-        
-        # Botão reset
+        st.session_state.uploaded_file_data = None
         if st.button("🔄 Resetar Aplicação"):
             reset_app()
-        
-        # Exemplo de formato esperado
-        with st.expander("📋 Exemplo de formato do arquivo CSV"):
-            st.code("""
-Freq [GHz], dB(S(2,1)), permittivity, other_param
-1.0, -2.5, 4.0, 1.0
-1.1, -1.8, 4.0, 1.0
-1.2, -0.5, 4.0, 1.0
-1.3, -4.2, 4.0, 1.0
-...            """, language="csv")
 
 
 if __name__ == "__main__":
