@@ -111,6 +111,8 @@ def main():
         st.session_state.analysis_results = None
     if 'uploader_key' not in st.session_state:
         st.session_state.uploader_key = 0
+    if 'export_ready' not in st.session_state:
+        st.session_state.export_ready = False
 
     # Upload do arquivo
     uploaded_file = st.file_uploader(
@@ -133,6 +135,7 @@ def main():
                     'param_cols': None,
                     'perm_col': None
                 }
+                st.session_state.export_ready = False
 
             # Preview do arquivo
             display_file_preview(df, uploaded_file)
@@ -158,26 +161,47 @@ def main():
                 return
             st.success(f"✅ Colunas identificadas: Frequência='{freq_col}', S21='{s21_col}'")
 
-            # CORREÇÃO: Processamento de dados apenas uma vez
-            if st.session_state.analysis_results is None:
-                with st.spinner("🔬 Processando dados e gerando gráficos..."):
-                    st.session_state.analysis_results = process_data(
-                        df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col
-                    )
-
-            # CORREÇÃO: Coletar todos os resultados para exportação
-            all_results_combined = []
-            for results_key in st.session_state:
-                if results_key.startswith("results_"):
-                    all_results_combined.extend(st.session_state[results_key])
-
-            # Botão de exportação
-            if all_results_combined:
-                temp_path, _ = st.session_state.analysis_results
-                if st.button("📦 Gerar Arquivos e .ZIP", type="primary"):
-                    export_analysis(temp_path, all_results_combined, uploaded_file.name)
-            else:
-                st.info("💡 Calcule algumas ressonâncias para habilitar a exportação")
+            # CORREÇÃO CRÍTICA: SEMPRE processar os dados para mostrar gráficos e campos
+            # Usamos um container para manter a interface estável
+            analysis_container = st.container()
+            
+            with analysis_container:
+                # Processar dados (sempre executa para mostrar gráficos)
+                temp_path, all_results_combined = process_data(
+                    df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col
+                )
+                
+                # Atualizar session_state apenas para referência
+                st.session_state.analysis_results = (temp_path, all_results_combined)
+                
+                # CORREÇÃO: Botão de exportação SEMPRE visível ao final
+                st.markdown("---")
+                st.markdown("### 📦 Exportação de Resultados")
+                
+                # Verificar se há resultados para exportar
+                has_results = any(len(st.session_state.get(f"results_{key}", [])) > 0 
+                               for key in st.session_state if key.startswith("results_"))
+                
+                if has_results:
+                    col1, col2 = st.columns([3, 1])
+                    with col2:
+                        if st.button("🚀 Gerar Arquivos para Download", type="primary", use_container_width=True):
+                            st.session_state.export_ready = True
+                    
+                    # Mostrar download apenas quando solicitado
+                    if st.session_state.export_ready:
+                        # Coletar todos os resultados
+                        all_results_for_export = []
+                        for key in st.session_state:
+                            if key.startswith("results_"):
+                                all_results_for_export.extend(st.session_state[key])
+                        
+                        if all_results_for_export:
+                            export_analysis(temp_path, all_results_for_export, uploaded_file.name)
+                        else:
+                            st.warning("⚠️ Nenhum resultado encontrado para exportar.")
+                else:
+                    st.info("💡 Calcule algumas ressonâncias para habilitar a exportação")
 
         except Exception as e:
             st.error(f"❌ Erro ao processar arquivo: {e}")
@@ -185,6 +209,7 @@ def main():
         st.info("👆 Faça upload de um arquivo CSV para iniciar a análise")
         st.session_state.analysis_results = None
         st.session_state.uploaded_file_data = None
+        st.session_state.export_ready = False
         if st.button("🔄 Resetar Aplicação"):
             reset_app()
 

@@ -38,7 +38,7 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
     # CORREÇÃO: Criar diretório temporário primeiro
     temp_path = Path(tempfile.mkdtemp(prefix="s21_analysis_"))
     
-    # CORREÇÃO: Renomear colunas no DataFrame original para uso consistente
+    # CORREÇÃO: Renomear colunas no DataFrame para uso consistente
     df_processed = df.copy()
     df_processed = df_processed.rename(columns={freq_col: 'freq_ghz', s21_col: 's21_db'})
     df_processed['s21_linear'] = 10 ** (df_processed['s21_db'] / 20)
@@ -48,7 +48,6 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
         unique_combinations = df_processed[param_cols].drop_duplicates()
         st.write(f"**📊 Combinações de parâmetros encontradas:** {len(unique_combinations)}")
         
-        # Mostrar combinações
         with st.expander("Ver combinações de parâmetros"):
             st.dataframe(unique_combinations, use_container_width=True)
     else:
@@ -57,7 +56,7 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
 
     all_results = []
 
-    # CORREÇÃO: Processar cada combinação - MOSTRAR GRÁFICO + CAMPOS JUNTOS
+    # CORREÇÃO: Processar cada combinação - SEMPRE mostrar gráfico + campos
     for idx, (_, combo) in enumerate(unique_combinations.iterrows()):
         if param_cols[0] != '_dummy':
             mask = pd.Series(True, index=df_processed.index)
@@ -71,23 +70,23 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
             param_id = "single_curve"
             combo = {}
 
-        # CORREÇÃO: Container para cada combinação (gráfico + análise juntos)
+        # CORREÇÃO: Container para cada combinação - SEMPRE visível
         with st.container():
             st.markdown(f'<div class="combination-section">', unsafe_allow_html=True)
             st.markdown(f"## 📈 Análise: {param_id}")
             
-            # Plotar gráfico com dados processados
+            # Plotar gráfico (SEMPRE executado)
             from utils.plot_generators import plot_interactive_curve
             plot_interactive_curve(df_subset, param_id, params=combo, param_cols=param_cols)
             
-            # Seção para identificação manual de ressonâncias (IMEDIATAMENTE após o gráfico)
+            # Seção para identificação manual (SEMPRE executada)
             from utils.calculation_engines import manual_ressonance_identification
             results = manual_ressonance_identification(
                 df_subset, filename, param_id, combo, param_cols, perm_col, 
                 unique_combinations, temp_path
             )
             
-            # CORREÇÃO: Armazenar resultados na session_state
+            # Armazenar resultados
             results_key = f"results_{param_id}"
             st.session_state[results_key] = results
             all_results.extend(results)
