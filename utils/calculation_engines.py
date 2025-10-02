@@ -52,7 +52,9 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 'Q_linear': None,
                 'sensibilidade_ghz_sqrt_er': None,
                 'figura_merito_3db': None,
-                'figura_merito_linear': None
+                'figura_merito_linear': None,
+                'figura_merito_normal_3db': None,  # Nova coluna
+                'figura_merito_normal_linear': None  # Nova coluna
             })
     
     # Processar cada ressonância com cálculo automático
@@ -95,7 +97,8 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 freq_left_db, freq_right_db, fwhm_db, Q_db = bandwidth_result_db
                 freq_left_linear, freq_right_linear, fwhm_linear, Q_linear = bandwidth_result_linear
                 
-                sensitivity, figure_of_merit_db, figure_of_merit_linear = calculate_sensitivity(
+                # CORREÇÃO: Calcular ambas as figuras de mérito
+                sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear = calculate_sensitivity_corrected(
                     freq_ressonancia, params, perm_col, unique_combinations, Q_db, Q_linear, s21_ressonancia_linear
                 )
                 
@@ -112,7 +115,9 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     'Q_linear': Q_linear,
                     'sensibilidade_ghz_sqrt_er': sensitivity,
                     'figura_merito_3db': figure_of_merit_db,
-                    'figura_merito_linear': figure_of_merit_linear
+                    'figura_merito_linear': figure_of_merit_linear,
+                    'figura_merito_normal_3db': figure_of_merit_normal_db,  # Nova coluna
+                    'figura_merito_normal_linear': figure_of_merit_normal_linear  # Nova coluna
                 }
                 
                 for col in param_cols:
@@ -145,12 +150,22 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     st.markdown(f"""
                     **Sensibilidade:**
                     - Sensibilidade: {sensitivity:.6f} GHz/√εr
-                    - Figura de mérito (-3dB): {figure_of_merit_db:.6f}
-                    - Figura de mérito (1/√2): {figure_of_merit_linear:.6f}
+                    """)
+                    
+                    st.markdown(f"""
+                    **Figura de Mérito (Normal):**
+                    - Método -3dB: {figure_of_merit_normal_db:.6f} (Q × Sensibilidade)
+                    - Método 1/√2: {figure_of_merit_normal_linear:.6f} (Q × Sensibilidade)
+                    """)
+                    
+                    st.markdown(f"""
+                    **Figura de Mérito (Com Amplitude):**
+                    - Método -3dB: {figure_of_merit_db:.6f} (Q × Sensibilidade × Amplitude)
+                    - Método 1/√2: {figure_of_merit_linear:.6f} (Q × Sensibilidade × Amplitude)
                     """)
                 
                 # Salvar resultado automaticamente em TXT
-                txt_content = generate_txt_result(result, param_cols, params)
+                txt_content = generate_txt_result_corrected(result, param_cols, params)
                 txt_filename = f"resultado_{Path(filename).stem}_{param_id}_ressonancia_{i+1}.txt"
                 txt_path = temp_path / txt_filename
                 with open(txt_path, 'w') as f:
@@ -226,25 +241,21 @@ def find_bandwidth_points_corrected(freq, y_values, center_freq, interp_func, is
         
         return freq_left_linear, freq_right_linear, fwhm_linear, Q_linear
 
-def find_bandwidth_points(freq, y_values, center_freq, center_value, target, is_linear=False):
-    """Função antiga mantida para compatibilidade - NÃO USAR"""
-    return find_bandwidth_points_corrected(freq, y_values, center_freq, None, is_linear)
-
-def calculate_sensitivity(freq_ressonancia, params, perm_col, unique_combinations, 
-                         Q_db, Q_linear, amplitude_linear):
-    """Calcula sensibilidade e figura de mérito"""
+def calculate_sensitivity_corrected(freq_ressonancia, params, perm_col, unique_combinations, 
+                                  Q_db, Q_linear, amplitude_linear):
+    """Calcula sensibilidade e ambas as figuras de mérito"""
     
     # Verificar se temos todos os valores necessários
     if (Q_db is None or Q_linear is None or amplitude_linear is None or 
         not perm_col or perm_col not in params):
-        return None, None, None
+        return None, None, None, None, None
     
     try:
         current_perm = params[perm_col]
         unique_perms = sorted(unique_combinations[perm_col].unique())
         
         if len(unique_perms) < 2:
-            return None, None, None
+            return None, None, None, None, None
         
         current_index = unique_perms.index(current_perm)
         
@@ -257,18 +268,23 @@ def calculate_sensitivity(freq_ressonancia, params, perm_col, unique_combination
             else:
                 sensitivity = 0
             
+            # Figura de mérito normal (Q × Sensibilidade)
+            figure_of_merit_normal_db = Q_db * sensitivity
+            figure_of_merit_normal_linear = Q_linear * sensitivity
+            
+            # Figura de mérito com amplitude (Q × Sensibilidade × Amplitude)
             figure_of_merit_db = Q_db * sensitivity * amplitude_linear
             figure_of_merit_linear = Q_linear * sensitivity * amplitude_linear
             
-            return sensitivity, figure_of_merit_db, figure_of_merit_linear
+            return sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear
         
-        return None, None, None
+        return None, None, None, None, None
     except (ValueError, IndexError, TypeError) as e:
         st.warning(f"⚠️ Não foi possível calcular sensibilidade: {e}")
-        return None, None, None
+        return None, None, None, None, None
 
-def generate_txt_result(result, param_cols, params):
-    """Gera conteúdo TXT com resultados"""
+def generate_txt_result_corrected(result, param_cols, params):
+    """Gera conteúdo TXT com resultados incluindo ambas as figuras de mérito"""
     
     content = "RESULTADOS DA ANÁLISE S21 - IDENTIFICAÇÃO MANUAL\n"
     content += "=" * 60 + "\n\n"
@@ -295,10 +311,31 @@ def generate_txt_result(result, param_cols, params):
     
     if result['sensibilidade_ghz_sqrt_er'] is not None:
         content += "SENSIBILIDADE:\n"
-        content += f"  Sensibilidade: {result['sensibilidade_ghz_sqrt_er']:.6f} GHz/√εr\n"
-        content += f"  Figura de mérito (-3dB): {result['figura_merito_3db']:.6f}\n"
-        content += f"  Figura de mérito (1/√2): {result['figura_merito_linear']:.6f}\n"
+        content += f"  Sensibilidade: {result['sensibilidade_ghz_sqrt_er']:.6f} GHz/√εr\n\n"
+        
+        content += "FIGURAS DE MÉRITO:\n"
+        content += f"  Figura de mérito normal (-3dB): {result['figura_merito_normal_3db']:.6f} (Q × Sensibilidade)\n"
+        content += f"  Figura de mérito normal (1/√2): {result['figura_merito_normal_linear']:.6f} (Q × Sensibilidade)\n"
+        content += f"  Figura de mérito com amplitude (-3dB): {result['figura_merito_3db']:.6f} (Q × Sensibilidade × Amplitude)\n"
+        content += f"  Figura de mérito com amplitude (1/√2): {result['figura_merito_linear']:.6f} (Q × Sensibilidade × Amplitude)\n"
     
     content += f"\nArquivo gerado automaticamente em: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
     
     return content
+
+# Funções antigas mantidas para compatibilidade
+def find_bandwidth_points(freq, y_values, center_freq, center_value, target, is_linear=False):
+    """Função antiga mantida para compatibilidade - NÃO USAR"""
+    return find_bandwidth_points_corrected(freq, y_values, center_freq, None, is_linear)
+
+def calculate_sensitivity(freq_ressonancia, params, perm_col, unique_combinations, 
+                         Q_db, Q_linear, amplitude_linear):
+    """Função antiga mantida para compatibilidade"""
+    result = calculate_sensitivity_corrected(freq_ressonancia, params, perm_col, unique_combinations, Q_db, Q_linear, amplitude_linear)
+    if result:
+        return result[0], result[1], result[2]  # Retorna apenas os 3 primeiros para compatibilidade
+    return None, None, None
+
+def generate_txt_result(result, param_cols, params):
+    """Função antiga mantida para compatibilidade"""
+    return generate_txt_result_corrected(result, param_cols, params)

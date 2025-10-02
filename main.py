@@ -162,30 +162,24 @@ def main():
                 st.markdown("---")
                 st.markdown("### 📦 Exportação de Resultados")
                 
-                # Verificar se há resultados para exportar
-                has_results = any(len(st.session_state.get(f"results_{key}", [])) > 0 
-                               for key in st.session_state if key.startswith("results_"))
+                # CORREÇÃO: Botão sempre visível, sem verificação de resultados
+                col1, col2 = st.columns([3, 1])
+                with col2:
+                    if st.button("🚀 Exportar Resultados em .ZIP", type="primary", use_container_width=True):
+                        st.session_state.export_ready = True
                 
-                if has_results:
-                    col1, col2 = st.columns([3, 1])
-                    with col2:
-                        if st.button("🚀 Gerar Arquivos para Download", type="primary", use_container_width=True):
-                            st.session_state.export_ready = True
+                # Mostrar download apenas quando solicitado
+                if st.session_state.export_ready:
+                    # Coletar todos os resultados
+                    all_results_for_export = []
+                    for key in st.session_state:
+                        if key.startswith("results_"):
+                            all_results_for_export.extend(st.session_state[key])
                     
-                    # Mostrar download apenas quando solicitado
-                    if st.session_state.export_ready:
-                        # Coletar todos os resultados
-                        all_results_for_export = []
-                        for key in st.session_state:
-                            if key.startswith("results_"):
-                                all_results_for_export.extend(st.session_state[key])
-                        
-                        if all_results_for_export:
-                            export_analysis(temp_path, all_results_for_export, uploaded_file.name)
-                        else:
-                            st.warning("⚠️ Nenhum resultado encontrado para exportar.")
-                else:
-                    st.info("💡 Calcule algumas ressonâncias para habilitar a exportação")
+                    if all_results_for_export:
+                        export_analysis(temp_path, all_results_for_export, uploaded_file.name)
+                    else:
+                        st.warning("⚠️ Nenhum resultado encontrado para exportar. Calcule algumas ressonâncias primeiro.")
 
         except Exception as e:
             st.error(f"❌ Erro ao processar arquivo: {e}")
