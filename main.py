@@ -158,38 +158,26 @@ def main():
                 return
             st.success(f"✅ Colunas identificadas: Frequência='{freq_col}', S21='{s21_col}'")
 
-            # Processamento de dados (somente uma vez)
+            # CORREÇÃO: Processamento de dados apenas uma vez
             if st.session_state.analysis_results is None:
-                st.session_state.analysis_results = process_data(
-                    df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col
-                )
+                with st.spinner("🔬 Processando dados e gerando gráficos..."):
+                    st.session_state.analysis_results = process_data(
+                        df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col
+                    )
 
-            temp_path, all_results = st.session_state.analysis_results
-
-            # Para cada curva, mostrar gráfico e permitir identificação manual
+            # CORREÇÃO: Coletar todos os resultados para exportação
+            all_results_combined = []
             for results_key in st.session_state:
                 if results_key.startswith("results_"):
-                    manual_ressonance_identification_container = st.container()
-                    with manual_ressonance_identification_container:
-                        current_results = st.session_state[results_key]
-                        param_id = results_key.replace("results_", "")
-                        # Obter subset de parâmetros
-                        params = {}
-                        if param_cols and param_cols[0] != "_dummy":
-                            for col in param_cols:
-                                params[col] = current_results[0].get(col, None)
-                        plot_interactive_curve(df, param_id, params, param_cols)
-                        st.session_state[results_key] = manual_ressonance_identification(
-                            df, uploaded_file.name, param_id, params, param_cols, perm_col, None, temp_path
-                        )
+                    all_results_combined.extend(st.session_state[results_key])
 
             # Botão de exportação
-            if st.button("📦 Gerar Arquivos e .ZIP"):
-                all_results_combined = []
-                for results_key in st.session_state:
-                    if results_key.startswith("results_"):
-                        all_results_combined.extend(st.session_state[results_key])
-                export_analysis(temp_path, all_results_combined, uploaded_file.name)
+            if all_results_combined:
+                temp_path, _ = st.session_state.analysis_results
+                if st.button("📦 Gerar Arquivos e .ZIP", type="primary"):
+                    export_analysis(temp_path, all_results_combined, uploaded_file.name)
+            else:
+                st.info("💡 Calcule algumas ressonâncias para habilitar a exportação")
 
         except Exception as e:
             st.error(f"❌ Erro ao processar arquivo: {e}")
