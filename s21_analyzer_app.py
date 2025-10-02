@@ -53,6 +53,14 @@ def main():
         "Plote os gráficos e identifique manualmente as ressonâncias para cálculo dos parâmetros."
     )
     
+    # Inicializar session_state
+    if 'analysis_started' not in st.session_state:
+        st.session_state.analysis_started = False
+    if 'uploaded_file_data' not in st.session_state:
+        st.session_state.uploaded_file_data = None
+    if 'analysis_results' not in st.session_state:
+        st.session_state.analysis_results = None
+    
     # Upload do arquivo
     uploaded_file = st.file_uploader(
         "**Selecione o arquivo CSV**", 
@@ -62,8 +70,29 @@ def main():
     
     if uploaded_file is not None:
         try:
-            # Ler o arquivo CSV
-            df = pd.read_csv(uploaded_file)
+            # Verificar se o arquivo mudou ou se é a primeira vez
+            if (st.session_state.uploaded_file_data is None or 
+                st.session_state.uploaded_file_data['name'] != uploaded_file.name):
+                
+                # Ler o arquivo CSV
+                df = pd.read_csv(uploaded_file)
+                
+                # Armazenar dados na session_state
+                st.session_state.uploaded_file_data = {
+                    'name': uploaded_file.name,
+                    'df': df,
+                    'freq_col': None,
+                    's21_col': None,
+                    'param_cols': None,
+                    'perm_col': None
+                }
+                
+                # Resetar análise quando o arquivo muda
+                st.session_state.analysis_started = False
+                st.session_state.analysis_results = None
+            else:
+                # Usar dados da session_state
+                df = st.session_state.uploaded_file_data['df']
             
             # Mostrar informações do arquivo
             col1, col2, col3 = st.columns(3)
@@ -84,21 +113,46 @@ def main():
                 
                 st.write(f"**Colunas:** {list(df.columns)}")
             
-            # Identificar colunas
-            freq_col, s21_col, param_cols, perm_col = identify_columns(df)
+            # Identificar colunas (apenas se ainda não foram identificadas)
+            if st.session_state.uploaded_file_data['freq_col'] is None:
+                freq_col, s21_col, param_cols, perm_col = identify_columns(df)
+                st.session_state.uploaded_file_data.update({
+                    'freq_col': freq_col,
+                    's21_col': s21_col,
+                    'param_cols': param_cols,
+                    'perm_col': perm_col
+                })
+            else:
+                freq_col = st.session_state.uploaded_file_data['freq_col']
+                s21_col = st.session_state.uploaded_file_data['s21_col']
+                param_cols = st.session_state.uploaded_file_data['param_cols']
+                perm_col = st.session_state.uploaded_file_data['perm_col']
             
             if freq_col and s21_col:
                 st.success(f"✅ Colunas identificadas: Frequência='{freq_col}', S21='{s21_col}'")
                 
-                analysis_button = st.button(
-                    "🚀 Plotar Gráficos e Identificar Ressonâncias", 
-                    type="primary",
-                    use_container_width=True
-                )
+                # Botão para iniciar análise
+                if not st.session_state.analysis_started:
+                    if st.button(
+                        "🚀 Plotar Gráficos e Identificar Ressonâncias", 
+                        type="primary",
+                        use_container_width=True,
+                        key="start_analysis"
+                    ):
+                        st.session_state.analysis_started = True
+                        st.rerun()
                 
-                if analysis_button:
+                # Se a análise já foi iniciada, mostrar os resultados
+                if st.session_state.analysis_started:
                     with st.spinner("🔬 Processando dados... Isso pode levar alguns segundos"):
-                        analyze_data(df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col)
+                        if st.session_state.analysis_results is None:
+                            st.session_state.analysis_results = analyze_data(
+                                df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col
+                            )
+                        else:
+                            # Reutilizar resultados existentes
+                            display_existing_analysis(st.session_state.analysis_results, uploaded_file.name)
+                
             else:
                 st.error("❌ Não foi possível identificar colunas de frequência e S21 automaticamente.")
                 if not freq_col:
@@ -113,6 +167,11 @@ def main():
         # Tela inicial quando não há arquivo
         st.info("👆 Faça upload de um arquivo CSV para iniciar a análise")
         
+        # Resetar session_state quando não há arquivo
+        st.session_state.analysis_started = False
+        st.session_state.uploaded_file_data = None
+        st.session_state.analysis_results = None
+        
         # Exemplo de formato esperado
         with st.expander("📋 Exemplo de formato do arquivo CSV"):
             st.code("""
@@ -122,6 +181,63 @@ Freq [GHz], dB(S(2,1)), permittivity, other_param
 1.2, -0.5, 4.0, 1.0
 1.3, -4.2, 4.0, 1.0
 ...            """, language="csv")
+
+def display_existing_analysis(analysis_data, filename):
+    """Exibe análise existente da session_state"""
+    temp_path, all_results = analysis_data
+    
+    # Criar dataframe com todos os resultados
+    if all_results:
+        results_df = pd.DataFrame(all_results)
+        
+        # Salvar Excel
+        excel_path = temp_path / f"resultados_completos_{Path(filename).stem}.xlsx"
+        with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+            results_df.to_excel(writer, sheet_name='Resultados', index=False)
+        
+        # Criar arquivo ZIP
+        zip_path = temp_path / f"resultados_analise_s21_{Path(filename).stem}.zip"
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Adicionar Excel
+            zip_file.write(excel_path, excel_path.name)
+            
+            # Adicionar todos os arquivos TXT
+            for txt_file in temp_path.glob("*.txt"):
+                zip_file.write(txt_file, txt_file.name)
+        
+        # Mostrar resumo final
+        st.success(f"✅ Análise concluída! Total de {len(all_results)} ressonâncias analisadas.")
+        
+        # Botão para download
+        with open(zip_path, 'rb') as f:
+            zip_data = f.read()
+        
+        st.download_button(
+            label="📥 Baixar Todos os Resultados (ZIP)",
+            data=zip_data,
+            file_name=zip_path.name,
+            mime="application/zip",
+            use_container_width=True
+        )
+        
+        # Mostrar resumo dos resultados
+        with st.expander("📈 Resumo dos Resultados", expanded=True):
+            st.dataframe(results_df, use_container_width=True)
+            
+            # Estatísticas básicas
+            if len(results_df) > 0:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    avg_q = results_df['Q_3db'].mean()
+                    st.metric("Fator Q Médio (-3dB)", f"{avg_q:.1f}")
+                with col2:
+                    avg_freq = results_df['frequencia_ressonancia_ghz'].mean()
+                    st.metric("Freq. Ressonância Média", f"{avg_freq:.3f} GHz")
+                with col3:
+                    total_ressonances = len(results_df)
+                    st.metric("Total de Ressonâncias", total_ressonances)
+    else:
+        st.warning("⚠️ Nenhuma ressonância foi analisada.")
 
 def identify_columns(df):
     """Identifica automaticamente as colunas no dataframe"""
@@ -205,58 +321,7 @@ def analyze_data(df, filename, freq_col, s21_col, param_cols, perm_col):
             )
             all_results.extend(results)
         
-        # Criar dataframe com todos os resultados
-        if all_results:
-            results_df = pd.DataFrame(all_results)
-            
-            # Salvar Excel
-            excel_path = temp_path / f"resultados_completos_{Path(filename).stem}.xlsx"
-            with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
-                results_df.to_excel(writer, sheet_name='Resultados', index=False)
-            
-            # Criar arquivo ZIP
-            zip_path = temp_path / f"resultados_analise_s21_{Path(filename).stem}.zip"
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                # Adicionar Excel
-                zip_file.write(excel_path, excel_path.name)
-                
-                # Adicionar todos os arquivos TXT
-                for txt_file in temp_path.glob("*.txt"):
-                    zip_file.write(txt_file, txt_file.name)
-            
-            # Mostrar resumo final
-            st.success(f"✅ Análise concluída! Total de {len(all_results)} ressonâncias analisadas.")
-            
-            # Botão para download
-            with open(zip_path, 'rb') as f:
-                zip_data = f.read()
-            
-            st.download_button(
-                label="📥 Baixar Todos os Resultados (ZIP)",
-                data=zip_data,
-                file_name=zip_path.name,
-                mime="application/zip",
-                use_container_width=True
-            )
-            
-            # Mostrar resumo dos resultados
-            with st.expander("📈 Resumo dos Resultados", expanded=True):
-                st.dataframe(results_df, use_container_width=True)
-                
-                # Estatísticas básicas
-                if len(results_df) > 0:
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        avg_q = results_df['Q_3db'].mean()
-                        st.metric("Fator Q Médio (-3dB)", f"{avg_q:.1f}")
-                    with col2:
-                        avg_freq = results_df['frequencia_ressonancia_ghz'].mean()
-                        st.metric("Freq. Ressonância Média", f"{avg_freq:.3f} GHz")
-                    with col3:
-                        total_ressonances = len(results_df)
-                        st.metric("Total de Ressonâncias", total_ressonances)
-        else:
-            st.warning("⚠️ Nenhuma ressonância foi analisada.")
+        return temp_path, all_results
 
 def plot_interactive_curve(df, param_id, params, param_cols):
     """Plota a curva S21 interativa para visualização"""
@@ -479,6 +544,8 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
         st.markdown('</div>', unsafe_allow_html=True)
     
     return results
+
+# [As funções find_bandwidth_points, calculate_sensitivity, e generate_txt_result permanecem EXATAMENTE iguais]
 
 def find_bandwidth_points(freq, y_values, center_freq, center_value, target, is_linear=False):
     """Encontra os pontos de largura de banda"""
