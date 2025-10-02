@@ -72,17 +72,16 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 format="%.4f",
                 key=f"freq_{param_id}_{i}"
             )
-        
-        with col2:
-            # CORREÇÃO: Cálculo automático e atualização em tempo real
-            idx_ressonancia = (freq_interp - freq_ressonancia).argmin()
-            s21_ressonancia_db = s21_db_interp[idx_ressonancia]
-            s21_ressonancia_linear = s21_linear_interp[idx_ressonancia]
             
-            st.write(f"**Frequência:** {freq_interp[idx_ressonancia]:.4f} GHz")
+            # CORREÇÃO 1: Calcular S21 atualizado para a frequência selecionada
+            s21_ressonancia_db = float(interp_func_db(freq_ressonancia))
+            s21_ressonancia_linear = float(interp_func_linear(freq_ressonancia))
+            
+            st.write(f"**Frequência:** {freq_ressonancia:.4f} GHz")
             st.write(f"**S21:** {s21_ressonancia_db:.4f} dB")
             st.write(f"**S21 (linear):** {s21_ressonancia_linear:.4f}")
-            
+        
+        with col2:
             # CORREÇÃO: Cálculo automático dos parâmetros (sem botão)
             bandwidth_result_db = find_bandwidth_points(
                 freq_interp, s21_db_interp, freq_ressonancia, s21_ressonancia_db, s21_ressonancia_db - 3.0
@@ -131,6 +130,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     **Método -3dB:**
                     - Largura de banda: {fwhm_db:.6f} GHz
                     - Fator Q: {Q_db:.2f}
+                    - Frequências: {freq_left_db:.4f} - {freq_right_db:.4f} GHz
                     """)
                 
                 with col_res2:
@@ -138,6 +138,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     **Método 1/√2:**
                     - Largura de banda: {fwhm_linear:.6f} GHz  
                     - Fator Q: {Q_linear:.2f}
+                    - Frequências: {freq_left_linear:.4f} - {freq_right_linear:.4f} GHz
                     """)
                 
                 if sensitivity is not None:
@@ -165,47 +166,78 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
     
     return current_results
 
-
-# [As funções find_bandwidth_points, calculate_sensitivity, e generate_txt_result permanecem IGUAIS]
-
 def find_bandwidth_points(freq, y_values, center_freq, center_value, target, is_linear=False):
-    """Encontra os pontos de largura de banda"""
+    """Encontra os pontos de largura de banda - VERSÃO CORRIGIDA"""
     
     def find_crossings(freq, y, target_val):
+        """Encontra todos os cruzamentos com o valor alvo"""
         crossings = []
         for i in range(len(freq) - 1):
-            if (y[i] - target_val) * (y[i+1] - target_val) < 0:
+            if (y[i] >= target_val and y[i+1] <= target_val) or (y[i] <= target_val and y[i+1] >= target_val):
                 # Interpolação linear para encontrar o ponto exato
                 x1, x2 = freq[i], freq[i+1]
                 y1, y2 = y[i], y[i+1]
-                x_cross = x1 + (target_val - y1) * (x2 - x1) / (y2 - y1)
-                crossings.append(x_cross)
+                if y2 - y1 != 0:  # Evitar divisão por zero
+                    x_cross = x1 + (target_val - y1) * (x2 - x1) / (y2 - y1)
+                    crossings.append(x_cross)
         return crossings
     
+    # Encontrar todos os cruzamentos
     crossings = find_crossings(freq, y_values, target)
     
     if len(crossings) < 2:
         st.warning(f"❌ Apenas {len(crossings)} ponto(s) de cruzamento encontrado(s). Necessário 2 pontos para calcular largura de banda.")
         return None
     
-    # Encontrar os dois cruzamentos mais próximos da frequência de ressonância
-    crossings_sorted = sorted(crossings, key=lambda x: abs(x - center_freq))
+    # CORREÇÃO 2: Estratégia melhorada para selecionar os pontos corretos
+    # 1. Separar cruzamentos à esquerda e à direita da frequência central
+    left_crossings = [x for x in crossings if x < center_freq]
+    right_crossings = [x for x in crossings if x > center_freq]
     
-    # Pegar os dois mais próximos (pode haver mais de 2 cruzamentos em curvas complexas)
-    if len(crossings_sorted) >= 2:
-        freq_left = min(crossings_sorted[0], crossings_sorted[1])
-        freq_right = max(crossings_sorted[0], crossings_sorted[1])
+    # 2. Se temos cruzamentos em ambos os lados, pegar os mais próximos do centro
+    if left_crossings and right_crossings:
+        freq_left = max(left_crossings)  # O maior à esquerda (mais próximo do centro)
+        freq_right = min(right_crossings)  # O menor à direita (mais próximo do centro)
+    
+    # 3. Caso não tenha cruzamentos em um dos lados, usar estratégia alternativa
+    elif len(crossings) >= 2:
+        # Ordenar cruzamentos por proximidade com a frequência central
+        crossings_sorted = sorted(crossings, key=lambda x: abs(x - center_freq))
+        
+        # Pegar os dois mais próximos e garantir que sejam um de cada lado se possível
+        candidate_pairs = []
+        for i in range(len(crossings_sorted)):
+            for j in range(i+1, len(crossings_sorted)):
+                candidate_pairs.append((crossings_sorted[i], crossings_sorted[j]))
+        
+        # Selecionar o par que contém a frequência central entre eles
+        valid_pairs = [(left, right) for left, right in candidate_pairs if left < center_freq < right]
+        
+        if valid_pairs:
+            # Escolher o par com menor largura (mais provável de ser correto)
+            valid_pairs.sort(key=lambda pair: abs(pair[1] - pair[0]))
+            freq_left, freq_right = valid_pairs[0]
+        else:
+            # Fallback: usar os dois mais próximos
+            freq_left, freq_right = crossings_sorted[0], crossings_sorted[1]
+            if freq_left > freq_right:
+                freq_left, freq_right = freq_right, freq_left
     else:
         return None
     
     bandwidth = abs(freq_right - freq_left)
     
-    # Evitar divisão por zero
-    if bandwidth > 0:
-        Q = center_freq / bandwidth
-    else:
-        Q = float('inf')
+    # Validação da largura de banda
+    if bandwidth > (freq.max() - freq.min()) / 2:
+        st.warning("⚠️ Largura de banda muito grande - possivelmente pontos incorretos")
+        return None
+    
+    if bandwidth <= 0:
         st.warning("⚠️ Largura de banda zero detectada - verifique os dados")
+        return None
+    
+    # Calcular Q
+    Q = center_freq / bandwidth
     
     return freq_left, freq_right, bandwidth, Q
 
