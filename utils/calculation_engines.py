@@ -161,12 +161,13 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
     if results_key not in st.session_state:
         st.session_state[results_key] = []
     
-    # CORREÇÃO: Se all_results_combined não foi passado, coletar de session_state
+    # CORREÇÃO: Coletar todos os resultados disponíveis
     if all_results_combined is None:
         all_results_combined = []
         for key in st.session_state:
             if key.startswith("results_"):
                 all_results_combined.extend(st.session_state[key])
+    
     
     # Interpolar dados para cálculos precisos
     interp_func_db = interpolate.interp1d(df['freq_ghz'], df['s21_db'], kind='cubic', fill_value='extrapolate')
@@ -399,13 +400,24 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 freq_left_db, freq_right_db, fwhm_db, Q_db = bandwidth_result_db
                 freq_left_linear, freq_right_linear, fwhm_linear, Q_linear = bandwidth_result_linear
                 
-                # CORREÇÃO: Chamar a função de sensibilidade com all_results_combined
-                sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear = calculate_sensitivity_corrected(
-                    freq_ressonancia, params, perm_col, unique_combinations, Q_db, Q_linear, s21_ressonancia_linear,
-                    param_id, all_results_combined  # CORREÇÃO: Passar all_results_combined
-                )
+                # CORREÇÃO: Tentar calcular sensibilidade, mas não bloquear se não conseguir
+                sensitivity_data = None
+                try:
+                    sensitivity_data = calculate_sensitivity_corrected(
+                        freq_ressonancia, params, perm_col, unique_combinations, Q_db, Q_linear, s21_ressonancia_linear,
+                        param_id, all_results_combined
+                    )
+                except Exception as e:
+                    # Não mostrar erro, apenas não calcular sensibilidade nesta fase
+                    pass
                 
-                # Atualizar resultado automaticamente
+                if sensitivity_data and all(x is not None for x in sensitivity_data):
+                    sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear = sensitivity_data
+                else:
+                    # Se não conseguiu calcular, deixar como None (será calculado depois)
+                    sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear = None, None, None, None, None
+                
+                # Atualizar resultado
                 result = {
                     'parametros': param_id,
                     'ressonancia_num': i + 1,

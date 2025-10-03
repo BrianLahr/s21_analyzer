@@ -66,7 +66,6 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
             param_id = "single_curve"
             combo = {}
 
-        # CORREÇÃO: Remover CSS fixo do container
         st.markdown("---")
         st.markdown(f"## 📈 Análise: {param_id}")
         
@@ -74,14 +73,61 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
         plot_interactive_curve(df_subset, param_id, params=combo, param_cols=param_cols)
         
         from utils.calculation_engines import manual_ressonance_identification
+        
+        # CORREÇÃO: Primeiro executar a identificação sem all_results
         results = manual_ressonance_identification(
             df_subset, filename, param_id, combo, param_cols, perm_col, 
-            unique_combinations, temp_path, all_results  # CORREÇÃO: Passar all_results
+            unique_combinations, temp_path, None  # Passar None inicialmente
         )
         
         results_key = f"results_{param_id}"
         st.session_state[results_key] = results
         all_results.extend(results)
+
+    # CORREÇÃO: Segunda passada para calcular sensibilidade com todos os resultados disponíveis
+    if len(all_results) > 0:
+        st.markdown("---")
+        st.markdown("## 🔄 Recalculando Sensibilidades com Todos os Dados")
+        
+        # Re-processar cada combinação com todos os resultados disponíveis
+        updated_all_results = []
+        for idx, (_, combo) in enumerate(unique_combinations.iterrows()):
+            if param_cols[0] != '_dummy':
+                param_id = "_".join([f"{col}_{combo[col]}" for col in param_cols])
+                param_id = "".join(c for c in param_id if c.isalnum() or c in ('_', '-'))
+            else:
+                param_id = "single_curve"
+            
+            results_key = f"results_{param_id}"
+            if results_key in st.session_state:
+                current_results = st.session_state[results_key].copy()
+                
+                # Recalcular sensibilidade para cada ressonância
+                for i, result in enumerate(current_results):
+                    if result['frequencia_ressonancia_ghz'] is not None:
+                        # Recalcular sensibilidade com todos os resultados
+                        from utils.calculation_engines import calculate_sensitivity_corrected
+                        
+                        sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear = calculate_sensitivity_corrected(
+                            result['frequencia_ressonancia_ghz'], 
+                            combo, perm_col, unique_combinations, 
+                            result['Q_3db'], result['Q_linear'], result['s21_ressonancia_linear'],
+                            param_id, all_results
+                        )
+                        
+                        # Atualizar resultado
+                        result.update({
+                            'sensibilidade_ghz_sqrt_er': sensitivity,
+                            'figura_merito_3db': figure_of_merit_db,
+                            'figura_merito_linear': figure_of_merit_linear,
+                            'figura_merito_normal_3db': figure_of_merit_normal_db,
+                            'figura_merito_normal_linear': figure_of_merit_normal_linear
+                        })
+                
+                st.session_state[results_key] = current_results
+                updated_all_results.extend(current_results)
+        
+        all_results = updated_all_results
 
     return temp_path, all_results
 
