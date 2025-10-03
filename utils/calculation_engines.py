@@ -151,7 +151,7 @@ def refine_minimum_location_hybrid(freq, s21_db, peak_idx, interp_func_db, windo
     return freq_min_original, s21_min_original, True
 
 def manual_ressonance_identification(df, filename, param_id, params, param_cols, perm_col, 
-                                   unique_combinations, temp_path):
+                                   unique_combinations, temp_path, all_results_combined=None):
     """Permite ao usuário identificar manualmente as ressonâncias com cálculo automático."""
     
     st.markdown("### 🔬 Identificação Manual de Ressonâncias")
@@ -160,6 +160,13 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
     results_key = f"results_{param_id}"
     if results_key not in st.session_state:
         st.session_state[results_key] = []
+    
+    # CORREÇÃO: Se all_results_combined não foi passado, coletar de session_state
+    if all_results_combined is None:
+        all_results_combined = []
+        for key in st.session_state:
+            if key.startswith("results_"):
+                all_results_combined.extend(st.session_state[key])
     
     # Interpolar dados para cálculos precisos
     interp_func_db = interpolate.interp1d(df['freq_ghz'], df['s21_db'], kind='cubic', fill_value='extrapolate')
@@ -387,13 +394,15 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 freq_interp, s21_linear_interp, freq_ressonancia, interp_func_linear, is_db=False
             )
             
+            # Dentro do loop de processamento de cada ressonância:
             if bandwidth_result_db and bandwidth_result_linear:
                 freq_left_db, freq_right_db, fwhm_db, Q_db = bandwidth_result_db
                 freq_left_linear, freq_right_linear, fwhm_linear, Q_linear = bandwidth_result_linear
                 
-                # Calcular ambas as figuras de mérito
+                # CORREÇÃO: Chamar a função de sensibilidade com all_results_combined
                 sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear = calculate_sensitivity_corrected(
-                    freq_ressonancia, params, perm_col, unique_combinations, Q_db, Q_linear, s21_ressonancia_linear
+                    freq_ressonancia, params, perm_col, unique_combinations, Q_db, Q_linear, s21_ressonancia_linear,
+                    param_id, all_results_combined  # CORREÇÃO: Passar all_results_combined
                 )
                 
                 # Atualizar resultado automaticamente
@@ -536,8 +545,8 @@ def find_bandwidth_points_corrected(freq, y_values, center_freq, interp_func, is
         return freq_left_linear, freq_right_linear, fwhm_linear, Q_linear
 
 def calculate_sensitivity_corrected(freq_ressonancia, params, perm_col, unique_combinations, 
-                                  Q_db, Q_linear, amplitude_linear):
-    """Calcula sensibilidade e ambas as figuras de mérito"""
+                                  Q_db, Q_linear, amplitude_linear, current_param_id, all_results):
+    """Calcula sensibilidade e ambas as figuras de mérito - VERSÃO CORRIGIDA"""
     
     # Verificar se temos todos os valores necessários
     if (Q_db is None or Q_linear is None or amplitude_linear is None or 
@@ -553,12 +562,33 @@ def calculate_sensitivity_corrected(freq_ressonancia, params, perm_col, unique_c
         
         current_index = unique_perms.index(current_perm)
         
+        # CORREÇÃO: Precisamos encontrar a próxima permissividade e suas ressonâncias correspondentes
         if current_index < len(unique_perms) - 1:
             next_perm = unique_perms[current_index + 1]
+            
+            # CORREÇÃO: Encontrar todas as ressonâncias para a permissividade atual e próxima
+            current_ressonances = get_ressonances_for_permittivity(all_results, params, perm_col, current_perm)
+            next_ressonances = get_ressonances_for_permittivity(all_results, params, perm_col, next_perm)
+            
+            if not current_ressonances or not next_ressonances:
+                return None, None, None, None, None
+            
+            # CORREÇÃO: Encontrar o par correspondente para esta ressonância específica
+            paired_freq_next = find_corresponding_ressonance(
+                freq_ressonancia, current_ressonances, next_ressonances
+            )
+            
+            if paired_freq_next is None:
+                return None, None, None, None, None
+            
+            # CORREÇÃO: Calcular diferença de frequência (deve ser positiva pois freq_current > freq_next)
+            freq_diff = abs(freq_ressonancia - paired_freq_next)
+            
+            # Calcular sqrt_diff das permissividades
             sqrt_diff = abs(np.sqrt(next_perm) - np.sqrt(current_perm))
             
-            if sqrt_diff > 0:
-                sensitivity = freq_ressonancia / sqrt_diff
+            if sqrt_diff > 0 and freq_diff > 0:
+                sensitivity = freq_diff / sqrt_diff
             else:
                 sensitivity = 0
             
@@ -566,9 +596,9 @@ def calculate_sensitivity_corrected(freq_ressonancia, params, perm_col, unique_c
             figure_of_merit_normal_db = Q_db * sensitivity
             figure_of_merit_normal_linear = Q_linear * sensitivity
             
-            # Figura de mérito com amplitude (Q × Sensibilidade × Amplitude)
-            figure_of_merit_db = Q_db * sensitivity * (1-amplitude_linear)
-            figure_of_merit_linear = Q_linear * sensitivity * (1-amplitude_linear)
+            # Figura de mérito com amplitude (Q × Sensibilidade × (1-Amplitude))
+            figure_of_merit_db = Q_db * sensitivity * (1 - amplitude_linear)
+            figure_of_merit_linear = Q_linear * sensitivity * (1 - amplitude_linear)
             
             return sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear
         
@@ -576,6 +606,88 @@ def calculate_sensitivity_corrected(freq_ressonancia, params, perm_col, unique_c
     except (ValueError, IndexError, TypeError) as e:
         st.warning(f"⚠️ Não foi possível calcular sensibilidade: {e}")
         return None, None, None, None, None
+
+def get_ressonances_for_permittivity(all_results, current_params, perm_col, target_perm):
+    """
+    Encontra todas as ressonâncias para uma determinada permissividade,
+    mantendo os mesmos valores dos outros parâmetros.
+    """
+    try:
+        target_ressonances = []
+        
+        for result in all_results:
+            # Verificar se é a mesma permissividade
+            if result.get(perm_col) != target_perm:
+                continue
+            
+            # Verificar se os outros parâmetros são iguais (exceto perm_col)
+            params_match = True
+            for key, value in current_params.items():
+                if key != perm_col and key != '_dummy' and key in result:
+                    if result[key] != value:
+                        params_match = False
+                        break
+            
+            if params_match:
+                target_ressonances.append({
+                    'freq': result['frequencia_ressonancia_ghz'],
+                    's21_db': result['s21_ressonancia_db'],
+                    'ressonancia_num': result['ressonancia_num']
+                })
+        
+        # Ordenar por frequência (mais baixa para mais alta)
+        return sorted(target_ressonances, key=lambda x: x['freq'])
+    
+    except Exception as e:
+        st.warning(f"⚠️ Erro ao buscar ressonâncias para permissividade {target_perm}: {e}")
+        return []
+
+def find_corresponding_ressonance(current_freq, current_ressonances, next_ressonances):
+    """
+    Encontra a ressonância correspondente na próxima permissividade.
+    Usa matching por ordem e validação por proximidade de frequência.
+    """
+    try:
+        # Ordenar ambas as listas por frequência
+        current_sorted = sorted(current_ressonances, key=lambda x: x['freq'])
+        next_sorted = sorted(next_ressonances, key=lambda x: x['freq'])
+        
+        # Encontrar o índice da ressonância atual na lista ordenada
+        current_index = None
+        for i, ress in enumerate(current_sorted):
+            if abs(ress['freq'] - current_freq) < 0.001:  # Tolerância de 1MHz
+                current_index = i
+                break
+        
+        if current_index is None or current_index >= len(next_sorted):
+            return None
+        
+        # CORREÇÃO: Validar se a correspondência faz sentido fisicamente
+        # A frequência deve diminuir com o aumento da permissividade
+        corresponding_freq = next_sorted[current_index]['freq']
+        
+        if corresponding_freq < current_freq:  # Fisicamente correto
+            return corresponding_freq
+        else:
+            # Tentar encontrar a melhor correspondência por proximidade
+            best_match = None
+            min_diff = float('inf')
+            
+            for next_ress in next_sorted:
+                freq_diff = abs(next_ress['freq'] - current_freq)
+                # Preferir matches onde next_freq < current_freq (fisicamente correto)
+                if next_ress['freq'] < current_freq and freq_diff < min_diff:
+                    min_diff = freq_diff
+                    best_match = next_ress['freq']
+            
+            if best_match is not None and min_diff < 0.1:  # Tolerância de 100MHz
+                return best_match
+            
+            return None
+    
+    except Exception as e:
+        st.warning(f"⚠️ Erro ao encontrar ressonância correspondente: {e}")
+        return None
 
 def generate_txt_result_corrected(result, param_cols, params):
     """Gera conteúdo TXT com resultados incluindo ambas as figuras de mérito"""

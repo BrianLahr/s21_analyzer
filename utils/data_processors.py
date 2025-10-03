@@ -76,7 +76,7 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
         from utils.calculation_engines import manual_ressonance_identification
         results = manual_ressonance_identification(
             df_subset, filename, param_id, combo, param_cols, perm_col, 
-            unique_combinations, temp_path
+            unique_combinations, temp_path, all_results  # CORREÇÃO: Passar all_results
         )
         
         results_key = f"results_{param_id}"
@@ -84,6 +84,8 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
         all_results.extend(results)
 
     return temp_path, all_results
+
+
 
 def reset_analysis_state(filename: str):
     """Reseta o estado da análise para um arquivo específico"""
