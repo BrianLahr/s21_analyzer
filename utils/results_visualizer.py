@@ -31,7 +31,8 @@ def create_results_visualizer():
     # Processar arquivos carregados
     all_data = load_and_process_files(uploaded_files)
     
-    if not all_data:
+    # CORREÇÃO: Verificar se o DataFrame está vazio corretamente
+    if all_data.empty:
         st.error("❌ Nenhum dado válido encontrado nos arquivos carregados.")
         return
     
@@ -74,7 +75,7 @@ def create_results_visualizer():
         # Filtrar por número de ressonância
         ressonancia_filter = st.multiselect(
             "Filtrar por Ressonância",
-            sorted(all_data['ressonancia_num'].unique()),
+            sorted(all_data['ressonancia_num'].unique()) if 'ressonancia_num' in all_data.columns else [],
             key="ressonancia_filter"
         )
     
@@ -130,17 +131,21 @@ def load_and_process_files(uploaded_files):
         except Exception as e:
             st.error(f"❌ Erro ao processar {uploaded_file.name}: {e}")
     
+    # CORREÇÃO: Retornar DataFrame vazio se não houver dados
     if all_data:
         return pd.concat(all_data, ignore_index=True)
-    return pd.DataFrame()
+    else:
+        return pd.DataFrame()
 
 def convert_numeric_columns(df):
     """Converte colunas para numérico quando possível"""
     for col in df.columns:
         if col not in ['parametros', 'arquivo']:
             try:
-                df[col] = pd.to_numeric(df[col], errors='ignore')
-            except:
+                # CORREÇÃO: Remover errors='ignore' deprecated
+                df[col] = pd.to_numeric(df[col])
+            except (ValueError, TypeError):
+                # Manter como string se não puder converter
                 pass
     return df
 
@@ -164,7 +169,7 @@ def apply_filters(df, ressonancia_filter):
     """Aplica filtros aos dados"""
     filtered_df = df.copy()
     
-    if ressonancia_filter:
+    if ressonancia_filter and 'ressonancia_num' in df.columns:
         filtered_df = filtered_df[filtered_df['ressonancia_num'].isin(ressonancia_filter)]
     
     return filtered_df
@@ -196,9 +201,9 @@ def create_interactive_plot(df, x_axis, y_axis, chart_type, group_by, sort_data)
         fig = px.line(df, x=x_axis, y=y_axis, color=color_col,
                      hover_data=get_hover_columns(df),
                      title=f"{y_axis} vs {x_axis}")
-        fig.add_trace(
-            px.scatter(df, x=x_axis, y=y_axis, color=color_col).data[0]
-        )
+        # CORREÇÃO: Adicionar pontos de forma correta
+        scatter_trace = px.scatter(df, x=x_axis, y=y_axis, color=color_col).data[0]
+        fig.add_trace(scatter_trace)
     
     # Melhorar layout
     fig.update_layout(
@@ -213,16 +218,6 @@ def create_interactive_plot(df, x_axis, y_axis, chart_type, group_by, sort_data)
             x=1.02
         ),
         margin=dict(l=50, r=150, t=50, b=50)
-    )
-    
-    # Melhorar tooltips
-    fig.update_traces(
-        hovertemplate=f"<b>{color_col}: %{{customdata[0]}}</b><br>" +
-                     f"{x_axis}: %{{x}}<br>" +
-                     f"{y_axis}: %{{y}}<br>" +
-                     "Ressonância: %{customdata[1]}<br>" +
-                     "S21: %{customdata[2]} dB<br>" +
-                     "Q (3dB): %{customdata[3]}<extra></extra>"
     )
     
     return fig
@@ -268,10 +263,21 @@ def display_statistics(df, x_axis, y_axis):
     
     # Tabela resumo por arquivo
     st.markdown("#### 📄 Resumo por Arquivo")
-    summary_df = df.groupby('arquivo').agg({
-        'ressonancia_num': 'count',
-        x_axis: ['mean', 'std'] if x_axis in df.columns and pd.api.types.is_numeric_dtype(df[x_axis]) else 'count',
-        y_axis: ['mean', 'std'] if y_axis in df.columns and pd.api.types.is_numeric_dtype(df[y_axis]) else 'count'
-    }).round(4)
+    summary_data = []
     
+    for arquivo in df['arquivo'].unique():
+        arquivo_data = df[df['arquivo'] == arquivo]
+        summary_row = {'Arquivo': arquivo, 'Pontos': len(arquivo_data)}
+        
+        if x_axis in df.columns and pd.api.types.is_numeric_dtype(df[x_axis]):
+            summary_row[f'{x_axis} (média)'] = arquivo_data[x_axis].mean()
+            summary_row[f'{x_axis} (std)'] = arquivo_data[x_axis].std()
+        
+        if y_axis in df.columns and pd.api.types.is_numeric_dtype(df[y_axis]):
+            summary_row[f'{y_axis} (média)'] = arquivo_data[y_axis].mean()
+            summary_row[f'{y_axis} (std)'] = arquivo_data[y_axis].std()
+        
+        summary_data.append(summary_row)
+    
+    summary_df = pd.DataFrame(summary_data).round(4)
     st.dataframe(summary_df, use_container_width=True)

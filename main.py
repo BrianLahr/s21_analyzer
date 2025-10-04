@@ -28,15 +28,20 @@ def setup_ui():
         "Altere as frequências para calcular automaticamente os parâmetros."
     )
 
-        # NOVO: Sistema de abas
+    # NOVO: Sistema de abas
     tab1, tab2 = st.tabs(["📈 Análise de Dados S21", "📊 Visualização de Resultados"])
     
     with tab1:
         run_analysis_tab()
     
     with tab2:
-        from utils.results_visualizer import create_results_visualizer
-        create_results_visualizer()
+        # CORREÇÃO: Importação dentro do bloco para evitar erro de importação circular
+        try:
+            from utils.results_visualizer import create_results_visualizer
+            create_results_visualizer()
+        except ImportError as e:
+            st.error(f"❌ Erro ao carregar o visualizador de resultados: {e}")
+            st.info("⚠️ Certifique-se de que o arquivo `results_visualizer.py` está na pasta `utils/`")
 
 # ======================
 # Reset de aplicação
@@ -45,7 +50,6 @@ def reset_app():
     """Reset completo do estado da aplicação"""
     st.session_state.clear()
     st.rerun()
-
 
 # ======================
 # Exportação de resultados
@@ -100,14 +104,11 @@ def export_analysis(temp_path, all_results, filename):
     )
     st.success(f"✅ Exportação concluída! Total de {len(all_results)} ressonâncias.")
 
-
 # ======================
 # Função principal
 # ======================
 def main():
     setup_ui()
-
-
 
 def run_analysis_tab():
     """Executa a aba de análise de dados S21"""
