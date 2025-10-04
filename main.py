@@ -28,7 +28,15 @@ def setup_ui():
         "Altere as frequências para calcular automaticamente os parâmetros."
     )
 
-
+        # NOVO: Sistema de abas
+    tab1, tab2 = st.tabs(["📈 Análise de Dados S21", "📊 Visualização de Resultados"])
+    
+    with tab1:
+        run_analysis_tab()
+    
+    with tab2:
+        from utils.results_visualizer import create_results_visualizer
+        create_results_visualizer()
 
 # ======================
 # Reset de aplicação
@@ -99,6 +107,10 @@ def export_analysis(temp_path, all_results, filename):
 def main():
     setup_ui()
 
+
+
+def run_analysis_tab():
+    """Executa a aba de análise de dados S21"""
     # Inicializar session_state
     if 'uploaded_file_data' not in st.session_state:
         st.session_state.uploaded_file_data = None
@@ -156,32 +168,26 @@ def main():
                 return
             st.success(f"✅ Colunas identificadas: Frequência='{freq_col}', S21='{s21_col}'")
 
-            # CORREÇÃO CRÍTICA: SEMPRE processar os dados para mostrar gráficos e campos
-            # Usamos um container para manter a interface estável
+            # Processar dados
             analysis_container = st.container()
             
             with analysis_container:
-                # Processar dados (sempre executa para mostrar gráficos)
                 temp_path, all_results_combined = process_data(
                     df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col
                 )
                 
-                # Atualizar session_state apenas para referência
                 st.session_state.analysis_results = (temp_path, all_results_combined)
                 
-                # CORREÇÃO: Botão de exportação SEMPRE visível ao final
+                # Exportação
                 st.markdown("---")
                 st.markdown("### 📦 Exportação de Resultados")
                 
-                # CORREÇÃO: Botão sempre visível, sem verificação de resultados
                 col1, col2 = st.columns([3, 1])
                 with col2:
                     if st.button("🚀 Exportar Resultados em .ZIP", type="primary", use_container_width=True):
                         st.session_state.export_ready = True
                 
-                # Mostrar download apenas quando solicitado
                 if st.session_state.export_ready:
-                    # Coletar todos os resultados
                     all_results_for_export = []
                     for key in st.session_state:
                         if key.startswith("results_"):
@@ -201,7 +207,6 @@ def main():
         st.session_state.export_ready = False
         if st.button("🔄 Resetar Aplicação"):
             reset_app()
-
 
 if __name__ == "__main__":
     main()
