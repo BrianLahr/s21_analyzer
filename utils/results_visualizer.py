@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pathlib import Path
 import io
+import base64
 
 def create_results_visualizer():
     """Cria a interface para visualização e análise de resultados exportados"""
@@ -259,8 +260,41 @@ def display_data_table_with_filters(df):
     with col_info4:
         st.metric("Linhas totais", len(final_display_df))
     
+    # NOVA FUNCIONALIDADE: Opções de exportação da tabela
+    st.markdown("---")
+    st.markdown("### 📤 Exportar Tabela para Apresentação")
+    
+    export_col1, export_col2, export_col3 = st.columns(3)
+    
+    with export_col1:
+        # Opção para limitar número de linhas na exportação
+        max_export_rows = st.number_input(
+            "Número máximo de linhas para exportar:",
+            min_value=1,
+            max_value=len(final_display_df),
+            value=min(50, len(final_display_df)),
+            help="Limite o número de linhas para facilitar a visualização em slides"
+        )
+    
+    with export_col2:
+        # Formato de exportação
+        export_format = st.selectbox(
+            "Formato de exportação:",
+            ["CSV", "Excel", "HTML", "Texto formatado"],
+            help="Escolha o formato mais adequado para sua apresentação"
+        )
+    
+    with export_col3:
+        # Incluir cabeçalho
+        include_header = st.checkbox("Incluir cabeçalho", value=True)
+        # Incluir índice
+        include_index = st.checkbox("Incluir índice", value=False)
+    
+    # Preparar dados para exportação
+    export_df = final_display_df.head(max_export_rows)
+    
     # Mostrar a tabela com os dados filtrados
-    st.markdown(f"**Tabela de Dados ({len(final_display_df)} linhas × {len(display_columns)} colunas):**")
+    st.markdown(f"**Tabela de Dados ({len(export_df)} linhas × {len(display_columns)} colunas):**")
     
     # Adicionar opção para mostrar/ocultar a tabela completa
     show_full_table = st.checkbox("Mostrar tabela completa de dados", value=False)
@@ -284,6 +318,86 @@ def display_data_table_with_filters(df):
         if len(final_display_df) > 100:
             st.info(f"📋 Mostrando 100 de {len(final_display_df)} linhas. Marque a opção acima para ver toda a tabela.")
     
+    # NOVA SEÇÃO: Botões de exportação
+    st.markdown("#### 📋 Copiar Tabela para Apresentação")
+    
+    # Criar colunas para os botões de exportação
+    copy_col1, copy_col2, copy_col3, copy_col4 = st.columns(4)
+    
+    with copy_col1:
+        # Exportar para CSV
+        csv_data = export_df.to_csv(index=include_index, header=include_header)
+        st.download_button(
+            label="📥 CSV",
+            data=csv_data,
+            file_name="dados_tabela.csv",
+            mime="text/csv",
+            help="Baixar tabela em formato CSV para Excel/Google Sheets"
+        )
+    
+    with copy_col2:
+        # Exportar para Excel
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            export_df.to_excel(writer, index=include_index, header=include_header, sheet_name='Dados')
+        excel_data = excel_buffer.getvalue()
+        st.download_button(
+            label="📊 Excel",
+            data=excel_data,
+            file_name="dados_tabela.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Baixar tabela em formato Excel"
+        )
+    
+    with copy_col3:
+        # Exportar para HTML (estilizado)
+        html_table = export_df.to_html(
+            index=include_index, 
+            header=include_header, 
+            classes='table table-striped table-bordered',
+            border=0
+        )
+        st.download_button(
+            label="🌐 HTML",
+            data=html_table,
+            file_name="dados_tabela.html",
+            mime="text/html",
+            help="Baixar tabela em formato HTML para web"
+        )
+    
+    with copy_col4:
+        # Copiar para área de transferência (formato simples)
+        if st.button("📋 Copiar", help="Copiar tabela formatada para área de transferência"):
+            # Criar uma versão formatada para colar em apresentações
+            clipboard_text = format_dataframe_for_clipboard(export_df, include_header, include_index)
+            st.code(clipboard_text, language='text')
+            st.success("✅ Texto formatado pronto para copiar! Selecione e copie o texto acima.")
+    
+    # Área de texto para colar diretamente no Google Slides
+    st.markdown("#### 🎥 Para Google Slides/Docs")
+    
+    # Formatar dados para colagem direta
+    slides_text = format_dataframe_for_slides(export_df, include_header, include_index)
+    
+    col_slide1, col_slide2 = st.columns([3, 1])
+    
+    with col_slide1:
+        st.text_area(
+            "Texto formatado para colar no Google Slides:",
+            value=slides_text,
+            height=200,
+            help="Copie este texto e cole diretamente no Google Slides - ele manterá a formatação de tabela"
+        )
+    
+    with col_slide2:
+        st.markdown("**💡 Dica:**")
+        st.markdown("""
+        1. Copie o texto ao lado
+        2. No Google Slides, cole com:
+           - **Ctrl+V** (manterá formatação)
+           - Ou **Ctrl+Shift+V** para texto simples
+        """)
+    
     # Mostrar resumo dos filtros aplicados
     if columns_to_remove:
         st.warning(f"🚫 **Colunas ocultas:** {', '.join(columns_to_remove)}")
@@ -293,6 +407,77 @@ def display_data_table_with_filters(df):
     
     # Retornar o DataFrame filtrado para uso no resto do aplicativo
     return row_filtered_df if 'row_filtered_df' in locals() else df
+
+def format_dataframe_for_clipboard(df, include_header=True, include_index=False):
+    """Formata DataFrame para colagem na área de transferência"""
+    output = io.StringIO()
+    
+    if include_header:
+        # Adicionar cabeçalho
+        headers = []
+        if include_index:
+            headers.append("Índice")
+        headers.extend(df.columns.tolist())
+        output.write("\t".join(headers) + "\n")
+    
+    # Adicionar dados
+    for i, (index, row) in enumerate(df.iterrows()):
+        row_data = []
+        if include_index:
+            row_data.append(str(index))
+        row_data.extend([str(x) for x in row])
+        output.write("\t".join(row_data) + "\n")
+    
+    return output.getvalue()
+
+def format_dataframe_for_slides(df, include_header=True, include_index=False):
+    """Formata DataFrame para colagem no Google Slides"""
+    output = io.StringIO()
+    
+    # Determinar larguras das colunas
+    col_widths = []
+    
+    if include_index:
+        index_width = max(len(str(idx)) for idx in df.index) + 2
+        col_widths.append(index_width)
+    
+    for col in df.columns:
+        col_width = max(len(str(col)), df[col].astype(str).str.len().max()) + 2
+        col_widths.append(col_width)
+    
+    # Criar linha separadora
+    separator = "+" + "+".join(["-" * width for width in col_widths]) + "+\n"
+    
+    output.write(separator)
+    
+    # Adicionar cabeçalho
+    if include_header:
+        header_cells = []
+        if include_index:
+            header_cells.append("Índice".center(col_widths[0]))
+        for i, col in enumerate(df.columns):
+            width_idx = i + (1 if include_index else 0)
+            header_cells.append(str(col).center(col_widths[width_idx]))
+        
+        output.write("|" + "|".join(header_cells) + "|\n")
+        output.write(separator)
+    
+    # Adicionar dados
+    for i, (index, row) in enumerate(df.iterrows()):
+        row_cells = []
+        if include_index:
+            row_cells.append(str(index).ljust(col_widths[0]))
+        
+        for j, value in enumerate(row):
+            width_idx = j + (1 if include_index else 0)
+            row_cells.append(str(value).ljust(col_widths[width_idx]))
+        
+        output.write("|" + "|".join(row_cells) + "|\n")
+    
+    output.write(separator)
+    return output.getvalue()
+
+# ... (as outras funções permanecem iguais: load_and_process_files, convert_numeric_columns, etc.)
 
 def load_and_process_files(uploaded_files):
     """Carrega e processa múltiplos arquivos Excel"""
