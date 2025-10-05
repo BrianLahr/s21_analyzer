@@ -36,6 +36,13 @@ def create_results_visualizer():
         st.error("❌ Nenhum dado válido encontrado nos arquivos carregados.")
         return
     
+    # NOVA FUNCIONALIDADE: Seletor de colunas para remover
+    st.markdown("---")
+    st.markdown("### 🗂️ Gerenciamento de Colunas")
+    
+    # Mostrar tabela com opção de remover colunas
+    display_data_table_with_column_selector(all_data)
+    
     # Interface de configuração do gráfico
     st.markdown("---")
     st.markdown("### ⚙️ Configuração do Gráfico")
@@ -110,6 +117,71 @@ def create_results_visualizer():
     st.markdown("### 📋 Estatísticas dos Dados")
     
     display_statistics(filtered_data, x_axis, y_axis)
+
+def display_data_table_with_column_selector(df):
+    """Exibe a tabela de dados com opção de selecionar colunas para remover"""
+    
+    st.markdown("#### 📊 Visualização dos Dados com Controle de Colunas")
+    st.markdown("Selecione as colunas que deseja **remover** da visualização:")
+    
+    # Obter todas as colunas disponíveis
+    all_columns = list(df.columns)
+    
+    # Remover colunas que não devem ser selecionáveis para remoção
+    non_removable_columns = ['arquivo']  # Colunas essenciais que não podem ser removidas
+    selectable_columns = [col for col in all_columns if col not in non_removable_columns]
+    
+    # Criar multiselect para escolher colunas a remover
+    columns_to_remove = st.multiselect(
+        "**Colunas para ocultar da tabela:**",
+        options=selectable_columns,
+        default=[],  # Nenhuma selecionada por padrão
+        help="Selecione as colunas que deseja remover da visualização da tabela"
+    )
+    
+    # Criar DataFrame filtrado (sem as colunas selecionadas para remover)
+    display_columns = [col for col in all_columns if col not in columns_to_remove]
+    filtered_df = df[display_columns]
+    
+    # Mostrar informações sobre a seleção
+    col_info1, col_info2, col_info3 = st.columns(3)
+    with col_info1:
+        st.metric("Colunas totais", len(all_columns))
+    with col_info2:
+        st.metric("Colunas visíveis", len(display_columns))
+    with col_info3:
+        st.metric("Colunas ocultas", len(columns_to_remove))
+    
+    # Mostrar a tabela com os dados filtrados
+    st.markdown(f"**Tabela de Dados ({len(filtered_df)} linhas × {len(display_columns)} colunas):**")
+    
+    # Adicionar opção para mostrar/ocultar a tabela completa
+    show_full_table = st.checkbox("Mostrar tabela completa de dados", value=False)
+    
+    if show_full_table:
+        # Mostrar tabela com paginação para melhor performance
+        st.dataframe(
+            filtered_df,
+            use_container_width=True,
+            height=400,
+            hide_index=True
+        )
+    else:
+        # Mostrar apenas uma prévia
+        st.dataframe(
+            filtered_df.head(100),  # Limitar a 100 linhas para prévia
+            use_container_width=True,
+            height=300,
+            hide_index=True
+        )
+        if len(filtered_df) > 100:
+            st.info(f"📋 Mostrando 100 de {len(filtered_df)} linhas. Marque a opção acima para ver toda a tabela.")
+    
+    # Mostrar colunas removidas se houver alguma
+    if columns_to_remove:
+        st.warning(f"🚫 **Colunas ocultas:** {', '.join(columns_to_remove)}")
+    
+    return filtered_df
 
 def load_and_process_files(uploaded_files):
     """Carrega e processa múltiplos arquivos Excel"""
