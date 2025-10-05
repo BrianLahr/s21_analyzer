@@ -38,10 +38,10 @@ def create_results_visualizer():
     
     # NOVA FUNCIONALIDADE: Seletor de colunas para remover
     st.markdown("---")
-    st.markdown("### 🗂️ Gerenciamento de Colunas")
+    st.markdown("### 🗂️ Gerenciamento de Colunas e Linhas")
     
-    # Mostrar tabela com opção de remover colunas
-    display_data_table_with_column_selector(all_data)
+    # Mostrar tabela com opção de remover colunas e filtrar linhas
+    filtered_data = display_data_table_with_filters(all_data)
     
     # Interface de configuração do gráfico
     st.markdown("---")
@@ -53,7 +53,7 @@ def create_results_visualizer():
         # Seleção do eixo X
         x_axis = st.selectbox(
             "Eixo X",
-            get_numeric_columns(all_data),
+            get_numeric_columns(filtered_data),
             key="x_axis_select"
         )
     
@@ -61,7 +61,7 @@ def create_results_visualizer():
         # Seleção do eixo Y
         y_axis = st.selectbox(
             "Eixo Y", 
-            get_numeric_columns(all_data),
+            get_numeric_columns(filtered_data),
             key="y_axis_select"
         )
     
@@ -82,7 +82,7 @@ def create_results_visualizer():
         # Filtrar por número de ressonância
         ressonancia_filter = st.multiselect(
             "Filtrar por Ressonância",
-            sorted(all_data['ressonancia_num'].unique()) if 'ressonancia_num' in all_data.columns else [],
+            sorted(filtered_data['ressonancia_num'].unique()) if 'ressonancia_num' in filtered_data.columns else [],
             key="ressonancia_filter"
         )
     
@@ -90,7 +90,7 @@ def create_results_visualizer():
         # Agrupar por
         group_by = st.selectbox(
             "Agrupar por",
-            ["Nenhum"] + get_groupable_columns(all_data),
+            ["Nenhum"] + get_groupable_columns(filtered_data),
             key="group_by_select"
         )
     
@@ -98,10 +98,10 @@ def create_results_visualizer():
         # Ordenar dados
         sort_data = st.checkbox("Ordenar dados por eixo X", value=True, key="sort_checkbox")
     
-    # Aplicar filtros
-    filtered_data = apply_filters(all_data, ressonancia_filter)
+    # Aplicar filtros adicionais
+    final_filtered_data = apply_filters(filtered_data, ressonancia_filter)
     
-    if filtered_data.empty:
+    if final_filtered_data.empty:
         st.warning("⚠️ Nenhum dado corresponde aos filtros aplicados.")
         return
     
@@ -109,51 +109,158 @@ def create_results_visualizer():
     st.markdown("---")
     st.markdown("### 📈 Gráfico de Resultados")
     
-    fig = create_interactive_plot(filtered_data, x_axis, y_axis, chart_type, group_by, sort_data)
+    fig = create_interactive_plot(final_filtered_data, x_axis, y_axis, chart_type, group_by, sort_data)
     st.plotly_chart(fig, use_container_width=True)
     
     # Estatísticas e informações
     st.markdown("---")
     st.markdown("### 📋 Estatísticas dos Dados")
     
-    display_statistics(filtered_data, x_axis, y_axis)
+    display_statistics(final_filtered_data, x_axis, y_axis)
 
-def display_data_table_with_column_selector(df):
-    """Exibe a tabela de dados com opção de selecionar colunas para remover"""
+def display_data_table_with_filters(df):
+    """Exibe a tabela de dados com opção de selecionar colunas para remover e filtrar linhas"""
     
-    st.markdown("#### 📊 Visualização dos Dados com Controle de Colunas")
-    st.markdown("Selecione as colunas que deseja **remover** da visualização:")
+    st.markdown("#### 📊 Visualização dos Dados com Controle de Colunas e Linhas")
     
-    # Obter todas as colunas disponíveis
-    all_columns = list(df.columns)
+    # Criar duas abas para organização
+    tab1, tab2 = st.tabs(["👁️ Controle de Colunas", "🎯 Filtro de Linhas"])
     
-    # Remover colunas que não devem ser selecionáveis para remoção
-    non_removable_columns = ['arquivo']  # Colunas essenciais que não podem ser removidas
-    selectable_columns = [col for col in all_columns if col not in non_removable_columns]
+    with tab1:
+        st.markdown("Selecione as colunas que deseja **remover** da visualização:")
+        
+        # Obter todas as colunas disponíveis
+        all_columns = list(df.columns)
+        
+        # Remover colunas que não devem ser selecionáveis para remoção
+        non_removable_columns = ['arquivo']  # Colunas essenciais que não podem ser removidas
+        selectable_columns = [col for col in all_columns if col not in non_removable_columns]
+        
+        # Criar multiselect para escolher colunas a remover
+        columns_to_remove = st.multiselect(
+            "**Colunas para ocultar da tabela:**",
+            options=selectable_columns,
+            default=[],  # Nenhuma selecionada por padrão
+            help="Selecione as colunas que deseja remover da visualização da tabela"
+        )
+        
+        # Criar DataFrame filtrado (sem as colunas selecionadas para remover)
+        display_columns = [col for col in all_columns if col not in columns_to_remove]
+        column_filtered_df = df[display_columns]
     
-    # Criar multiselect para escolher colunas a remover
-    columns_to_remove = st.multiselect(
-        "**Colunas para ocultar da tabela:**",
-        options=selectable_columns,
-        default=[],  # Nenhuma selecionada por padrão
-        help="Selecione as colunas que deseja remover da visualização da tabela"
-    )
+    with tab2:
+        st.markdown("Filtre linhas baseadas em valores de colunas específicas:")
+        
+        # Selecionar coluna para filtrar
+        filter_column = st.selectbox(
+            "**Coluna para filtrar:**",
+            options=[col for col in df.columns if col != 'arquivo'],
+            help="Selecione a coluna que deseja usar para filtrar as linhas"
+        )
+        
+        # Mostrar informações sobre a coluna selecionada
+        if filter_column in df.columns:
+            col_info1, col_info2, col_info3 = st.columns(3)
+            with col_info1:
+                st.metric("Tipo de dados", str(df[filter_column].dtype))
+            with col_info2:
+                st.metric("Valores únicos", df[filter_column].nunique())
+            with col_info3:
+                st.metric("Valores nulos", df[filter_column].isnull().sum())
+            
+            # Interface de filtro baseada no tipo de dados
+            if pd.api.types.is_numeric_dtype(df[filter_column]):
+                # Para colunas numéricas: permitir filtrar por range ou valor específico
+                filter_method = st.radio(
+                    "Método de filtro:",
+                    ["Remover valores específicos", "Remover fora do intervalo"],
+                    key="numeric_filter_method"
+                )
+                
+                if filter_method == "Remover valores específicos":
+                    # Multiselect para valores numéricos
+                    unique_values = sorted(df[filter_column].dropna().unique())
+                    values_to_remove = st.multiselect(
+                        f"Valores em '{filter_column}' para **remover**:",
+                        options=unique_values,
+                        help="Selecione os valores que deseja remover do dataset"
+                    )
+                    
+                    # Aplicar filtro
+                    if values_to_remove:
+                        row_filtered_df = df[~df[filter_column].isin(values_to_remove)]
+                    else:
+                        row_filtered_df = df
+                        
+                else:  # Remover fora do intervalo
+                    min_val = float(df[filter_column].min())
+                    max_val = float(df[filter_column].max())
+                    
+                    col_range1, col_range2 = st.columns(2)
+                    with col_range1:
+                        lower_bound = st.number_input(
+                            "Valor mínimo (incluir):",
+                            value=min_val,
+                            min_value=min_val,
+                            max_value=max_val,
+                            key="lower_bound"
+                        )
+                    with col_range2:
+                        upper_bound = st.number_input(
+                            "Valor máximo (incluir):",
+                            value=max_val,
+                            min_value=min_val,
+                            max_value=max_val,
+                            key="upper_bound"
+                        )
+                    
+                    # Aplicar filtro de intervalo
+                    row_filtered_df = df[(df[filter_column] >= lower_bound) & (df[filter_column] <= upper_bound)]
+                    
+            else:
+                # Para colunas categóricas/string: multiselect
+                unique_values = sorted(df[filter_column].dropna().unique())
+                values_to_remove = st.multiselect(
+                    f"Valores em '{filter_column}' para **remover**:",
+                    options=unique_values,
+                    help="Selecione os valores que deseja remover do dataset"
+                )
+                
+                # Aplicar filtro
+                if values_to_remove:
+                    row_filtered_df = df[~df[filter_column].isin(values_to_remove)]
+                else:
+                    row_filtered_df = df
+            
+            # Mostrar estatísticas do filtro
+            removed_count = len(df) - len(row_filtered_df)
+            st.info(f"🔍 Filtro aplicado: {len(row_filtered_df)} linhas restantes ({removed_count} linhas removidas)")
+            
+        else:
+            row_filtered_df = df
+            st.warning("Selecione uma coluna válida para filtrar")
     
-    # Criar DataFrame filtrado (sem as colunas selecionadas para remover)
-    display_columns = [col for col in all_columns if col not in columns_to_remove]
-    filtered_df = df[display_columns]
+    # Combinar filtros de colunas e linhas
+    if 'column_filtered_df' in locals() and 'row_filtered_df' in locals():
+        # Aplicar filtro de colunas ao DataFrame filtrado por linhas
+        final_display_df = row_filtered_df[display_columns]
+    else:
+        final_display_df = df[display_columns] if 'display_columns' in locals() else df
     
-    # Mostrar informações sobre a seleção
-    col_info1, col_info2, col_info3 = st.columns(3)
+    # Mostrar informações gerais sobre a seleção
+    st.markdown("---")
+    col_info1, col_info2, col_info3, col_info4 = st.columns(4)
     with col_info1:
         st.metric("Colunas totais", len(all_columns))
     with col_info2:
         st.metric("Colunas visíveis", len(display_columns))
     with col_info3:
         st.metric("Colunas ocultas", len(columns_to_remove))
+    with col_info4:
+        st.metric("Linhas totais", len(final_display_df))
     
     # Mostrar a tabela com os dados filtrados
-    st.markdown(f"**Tabela de Dados ({len(filtered_df)} linhas × {len(display_columns)} colunas):**")
+    st.markdown(f"**Tabela de Dados ({len(final_display_df)} linhas × {len(display_columns)} colunas):**")
     
     # Adicionar opção para mostrar/ocultar a tabela completa
     show_full_table = st.checkbox("Mostrar tabela completa de dados", value=False)
@@ -161,7 +268,7 @@ def display_data_table_with_column_selector(df):
     if show_full_table:
         # Mostrar tabela com paginação para melhor performance
         st.dataframe(
-            filtered_df,
+            final_display_df,
             use_container_width=True,
             height=400,
             hide_index=True
@@ -169,19 +276,23 @@ def display_data_table_with_column_selector(df):
     else:
         # Mostrar apenas uma prévia
         st.dataframe(
-            filtered_df.head(100),  # Limitar a 100 linhas para prévia
+            final_display_df.head(100),  # Limitar a 100 linhas para prévia
             use_container_width=True,
             height=300,
             hide_index=True
         )
-        if len(filtered_df) > 100:
-            st.info(f"📋 Mostrando 100 de {len(filtered_df)} linhas. Marque a opção acima para ver toda a tabela.")
+        if len(final_display_df) > 100:
+            st.info(f"📋 Mostrando 100 de {len(final_display_df)} linhas. Marque a opção acima para ver toda a tabela.")
     
-    # Mostrar colunas removidas se houver alguma
+    # Mostrar resumo dos filtros aplicados
     if columns_to_remove:
         st.warning(f"🚫 **Colunas ocultas:** {', '.join(columns_to_remove)}")
     
-    return filtered_df
+    if 'values_to_remove' in locals() and values_to_remove:
+        st.warning(f"🚫 **Linhas removidas:** {len(df) - len(row_filtered_df)} linhas onde '{filter_column}' contém {values_to_remove}")
+    
+    # Retornar o DataFrame filtrado para uso no resto do aplicativo
+    return row_filtered_df if 'row_filtered_df' in locals() else df
 
 def load_and_process_files(uploaded_files):
     """Carrega e processa múltiplos arquivos Excel"""
