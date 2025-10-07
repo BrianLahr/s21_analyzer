@@ -428,7 +428,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     'Q_3db': Q_db,
                     'fwhm_linear_ghz': fwhm_linear,
                     'Q_linear': Q_linear,
-                    'sensibilidade_ghz_sqrt_er': sensitivity,
+                    'sensibilidade_mhz_sqrt_er': sensitivity,
                     'figura_merito_3db': figure_of_merit_db,
                     'figura_merito_linear': figure_of_merit_linear,
                     'figura_merito_normal_3db': figure_of_merit_normal_db,
@@ -464,7 +464,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 if sensitivity is not None:
                     st.markdown(f"""
                     **Sensibilidade:**
-                    - Sensibilidade: {sensitivity:.6f} GHz/√εr
+                    - Sensibilidade: {sensitivity:.6f} MHz/√εr
                     """)
                     
                     st.markdown(f"""
@@ -594,7 +594,7 @@ def calculate_sensitivity_corrected(freq_ressonancia, params, perm_col, unique_c
                 return None, None, None, None, None
             
             # CORREÇÃO: Calcular diferença de frequência (deve ser positiva pois freq_current > freq_next)
-            freq_diff = abs(freq_ressonancia - paired_freq_next)
+            freq_diff = 1000.0*abs(freq_ressonancia - paired_freq_next)
             
             # Calcular sqrt_diff das permissividades
             sqrt_diff = abs(np.sqrt(next_perm) - np.sqrt(current_perm))
@@ -730,7 +730,7 @@ def generate_txt_result_corrected(result, param_cols, params):
     
     if result['sensibilidade_ghz_sqrt_er'] is not None:
         content += "SENSIBILIDADE:\n"
-        content += f"  Sensibilidade: {result['sensibilidade_ghz_sqrt_er']:.6f} GHz/√εr\n\n"
+        content += f"  Sensibilidade: {result['sensibilidade_mhz_sqrt_er']:.6f} MHz/√εr\n\n"
         
         content += "FIGURAS DE MÉRITO:\n"
         content += f"  Figura de mérito normal (-3dB): {result['figura_merito_normal_3db']:.6f} (Q × Sensibilidade)\n"
