@@ -280,7 +280,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                         'Q_3db': None,
                         'fwhm_linear_ghz': None,
                         'Q_linear': None,
-                        'sensibilidade_ghz_sqrt_er': None,
+                        'sensibilidade_mhz_sqrt_er': None,
                         'figura_merito_3db': None,
                         'figura_merito_linear': None,
                         'figura_merito_normal_3db': None,
@@ -349,7 +349,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 'Q_3db': None,
                 'fwhm_linear_ghz': None,
                 'Q_linear': None,
-                'sensibilidade_ghz_sqrt_er': None,
+                'sensibilidade_mhz_sqrt_er': None,
                 'figura_merito_3db': None,
                 'figura_merito_linear': None,
                 'figura_merito_normal_3db': None,
@@ -728,7 +728,7 @@ def generate_txt_result_corrected(result, param_cols, params):
     content += f"  Largura de banda: {result['fwhm_linear_ghz']:.6f} GHz\n"
     content += f"  Fator de qualidade (Q): {result['Q_linear']:.2f}\n\n"
     
-    if result['sensibilidade_ghz_sqrt_er'] is not None:
+    if result['sensibilidade_mhz_sqrt_er'] is not None:
         content += "SENSIBILIDADE:\n"
         content += f"  Sensibilidade: {result['sensibilidade_mhz_sqrt_er']:.6f} MHz/√εr\n\n"
         

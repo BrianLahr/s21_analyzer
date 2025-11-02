@@ -601,7 +601,7 @@ def get_hover_columns(df):
         hover_cols['ressonancia_num'] = True
     
     # Adicionar outras colunas importantes
-    important_cols = ['s21_ressonancia_db', 'Q_3db', 'sensibilidade_ghz_sqrt_er', 
+    important_cols = ['s21_ressonancia_db', 'Q_3db', 'sensibilidade_mhz_sqrt_er', 
                      'figura_merito_normal_3db', 'sample_height [mm]', '$perm2 []']
     
     for col in important_cols:

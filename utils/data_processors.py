@@ -117,7 +117,7 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
                         
                         # Atualizar resultado
                         result.update({
-                            'sensibilidade_ghz_sqrt_er': sensitivity,
+                            'sensibilidade_mhz_sqrt_er': sensitivity,
                             'figura_merito_3db': figure_of_merit_db,
                             'figura_merito_linear': figure_of_merit_linear,
                             'figura_merito_normal_3db': figure_of_merit_normal_db,
