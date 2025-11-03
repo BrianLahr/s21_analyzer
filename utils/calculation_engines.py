@@ -33,27 +33,20 @@ def detect_auto_ressonances(df, min_depth_db=-3.0, min_prominence=1.0, min_dista
         interp_func_db = interpolate.interp1d(freq, s_db, kind='cubic', fill_value='extrapolate')
         interp_func_linear = interpolate.interp1d(freq, s_linear, kind='cubic', fill_value='extrapolate')
         
-        # ATUALIZADO: Lógica diferente para S11 vs S21
-        if s_param_type == "S21":
-            # Para S21: buscar mínimos (ressonâncias são vales)
-            signal_for_peaks = -s_db
-            height_threshold = -min_depth_db  # Invertido para S21
-        else:  # S11
-            # Para S11: buscar máximos (ressonâncias são picos)
-            signal_for_peaks = s_db
-            height_threshold = min_depth_db  # Direto para S11
+        # MESMA LÓGICA: Encontrar mínimos (inverter sinal pois find_peaks busca máximos)
+        inverted_s = -s_db
         
         # Calcular distância em pontos
         freq_range = freq[-1] - freq[0]
         min_distance_points = int(min_distance_ghz * len(freq) / freq_range)
         min_distance_points = max(5, min_distance_points)  # Mínimo de 5 pontos
         
-        # Encontrar picos (mínimos no S21, máximos no S11)
+        # Encontrar picos (mínimos no S original)
         peaks, properties = find_peaks(
-            signal_for_peaks,
+            inverted_s,
             prominence=min_prominence,
             distance=min_distance_points,
-            height=height_threshold
+            height=-min_depth_db  # Altura mínima (invertida)
         )
         
         # Filtrar ressonâncias válidas
@@ -64,18 +57,13 @@ def detect_auto_ressonances(df, min_depth_db=-3.0, min_prominence=1.0, min_dista
             s_val_linear = s_linear[peak_idx]
             prominence_val = properties['prominences'][i]
             
-            # ATUALIZADO: Critérios de validação diferentes para S11/S21
-            if s_param_type == "S21":
-                is_valid = (s_val_db < min_depth_db and  # Deve ser mais profundo que -3dB
-                           prominence_val >= min_prominence)  # Prominência suficiente
-            else:  # S11
-                is_valid = (s_val_db > min_depth_db and  # Deve ser maior que o threshold
-                           prominence_val >= min_prominence)  # Prominência suficiente
-            
-            if is_valid:
+            # MESMA LÓGICA: Critérios de validação
+            if (s_val_db < min_depth_db and  # Deve ser mais profundo que -3dB
+                prominence_val >= min_prominence):  # Prominência suficiente
+                
                 # ESTRATÉGIA HÍBRIDA: usar dados originais E interpolação
-                refined_freq, refined_s_db, use_original = refine_ressonance_location_hybrid(
-                    freq, s_db, peak_idx, interp_func_db, s_param_type
+                refined_freq, refined_s_db, use_original = refine_minimum_location_hybrid(
+                    freq, s_db, peak_idx, interp_func_db
                 )
                 
                 # Calcular S linear usando a frequência refinada
@@ -102,9 +90,9 @@ def detect_auto_ressonances(df, min_depth_db=-3.0, min_prominence=1.0, min_dista
         st.warning(f"⚠️ Erro na detecção automática: {e}")
         return []
 
-def refine_ressonance_location_hybrid(freq, s_db, peak_idx, interp_func_db, s_param_type="S21", window_size=15):
+def refine_minimum_location_hybrid(freq, s_db, peak_idx, interp_func_db, window_size=15):
     """
-    Refina a localização da ressonância usando estratégia híbrida.
+    Refina a localização do mínimo usando estratégia híbrida.
     Retorna: (frequência, s_db, use_original)
     """
     n = len(freq)
@@ -115,77 +103,57 @@ def refine_ressonance_location_hybrid(freq, s_db, peak_idx, interp_func_db, s_pa
     freq_region = freq[start_idx:end_idx]
     s_region = s_db[start_idx:end_idx]
     
-    # ATUALIZADO: Encontrar extremo baseado no tipo S
-    if s_param_type == "S21":
-        # Para S21: buscar mínimo
-        extreme_idx_original = np.argmin(s_region)
-    else:  # S11
-        # Para S11: buscar máximo
-        extreme_idx_original = np.argmax(s_region)
-    
-    freq_extreme_original = freq_region[extreme_idx_original]
-    s_extreme_original = s_region[extreme_idx_original]
+    # Encontrar índice do mínimo absoluto na região (dados originais)
+    min_idx_original = np.argmin(s_region)
+    freq_min_original = freq_region[min_idx_original]
+    s_min_original = s_region[min_idx_original]
     
     # ESTRATÉGIA 1: Ajuste quadrático nos dados originais
     if len(freq_region) >= 5:  # Mais pontos para melhor ajuste
         try:
-            # Ajuste quadrático para encontrar extremo exato
+            # Ajuste quadrático para encontrar mínimo exato
             coeffs = np.polyfit(freq_region, s_region, 2)
             a, b, c = coeffs
             
-            # Extremo da parábola: x = -b/(2a)
-            if abs(a) > 0.001:  # Curvatura significativa
+            # Mínimo da parábola: x = -b/(2a)
+            if a > 0.001:  # Concavidade para cima significativa
                 exact_freq = -b / (2 * a)
                 exact_s = a * exact_freq**2 + b * exact_freq + c
                 
-                # Verificar se está dentro da região
-                if (freq_region[0] <= exact_freq <= freq_region[-1]):
+                # Verificar se está dentro da região e é melhor que o original
+                if (freq_region[0] <= exact_freq <= freq_region[-1] and
+                    exact_s <= s_min_original + 0.1):  # Não pode ser pior
                     
                     # VALIDAÇÃO: Verificar com interpolação cúbica
                     interp_s = float(interp_func_db(exact_freq))
                     
-                    # ATUALIZADO: Critério de validação baseado no tipo S
-                    if s_param_type == "S21":
-                        is_better = exact_s <= s_extreme_original + 0.1  # Não pode ser pior para S21
-                    else:
-                        is_better = exact_s >= s_extreme_original - 0.1  # Não pode ser pior para S11
-                    
                     # Se a interpolação confirma, usar valor refinado
-                    if is_better and abs(exact_s - interp_s) < 0.5:  # Diferença pequena
+                    if abs(exact_s - interp_s) < 0.5:  # Diferença pequena
                         return exact_freq, interp_s, False
         
         except:
             pass
     
-    # ESTRATÉGIA 2: Busca por extremos na interpolação de alta resolução
+    # ESTRATÉGIA 2: Busca por mínimos na interpolação de alta resolução
     try:
         # Criar grid fino na região
         freq_fine = np.linspace(freq_region[0], freq_region[-1], 1000)
         s_fine = interp_func_db(freq_fine)
         
-        # ATUALIZADO: Encontrar extremo baseado no tipo S
-        if s_param_type == "S21":
-            extreme_idx_fine = np.argmin(s_fine)
-        else:  # S11
-            extreme_idx_fine = np.argmax(s_fine)
-            
-        freq_extreme_fine = freq_fine[extreme_idx_fine]
-        s_extreme_fine = s_fine[extreme_idx_fine]
+        # Encontrar mínimo no grid fino
+        min_idx_fine = np.argmin(s_fine)
+        freq_min_fine = freq_fine[min_idx_fine]
+        s_min_fine = s_fine[min_idx_fine]
         
-        # ATUALIZADO: Só usar se for significativamente melhor que o original
-        if s_param_type == "S21":
-            is_significantly_better = s_extreme_fine < s_extreme_original - 0.01  # Pelo menos 0.01dB melhor para S21
-        else:
-            is_significantly_better = s_extreme_fine > s_extreme_original + 0.01  # Pelo menos 0.01dB melhor para S11
-        
-        if is_significantly_better:
-            return freq_extreme_fine, s_extreme_fine, False
+        # Só usar se for significativamente melhor que o original
+        if s_min_fine < s_min_original - 0.01:  # Pelo menos 0.01dB melhor
+            return freq_min_fine, s_min_fine, False
     
     except:
         pass
     
     # ESTRATÉGIA 3: Fallback para o melhor ponto original
-    return freq_extreme_original, s_extreme_original, True
+    return freq_min_original, s_min_original, True
 
 def manual_ressonance_identification(df, filename, param_id, params, param_cols, perm_col, 
                                    unique_combinations, temp_path, all_results_combined=None, s_param_type="S21"):
@@ -225,25 +193,14 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        # ATUALIZADO: Descrição baseada no tipo S
-        if s_param_type == "S21":
-            min_depth = st.number_input(
-                "Profundidade mínima (dB)",
-                min_value=-50.0,
-                max_value=0.0,
-                value=-3.0,
-                step=0.5,
-                key=f"min_depth_{param_id}"
-            )
-        else:  # S11
-            min_depth = st.number_input(
-                "Altura mínima (dB)",
-                min_value=-50.0,
-                max_value=0.0,
-                value=-3.0,
-                step=0.5,
-                key=f"min_depth_{param_id}"
-            )
+        min_depth = st.number_input(
+            "Profundidade mínima (dB)",
+            min_value=-50.0,
+            max_value=0.0,
+            value=-3.0,
+            step=0.5,
+            key=f"min_depth_{param_id}"
+        )
     with col2:
         min_prominence = st.number_input(
             "Prominência mínima (dB)",
@@ -265,9 +222,9 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
     
     # Adicionar informações sobre a estratégia de detecção
     with st.expander("🔧 Configurações Avançadas de Detecção"):
-        st.info(f"""
-        **Estratégia Híbrida de Detecção {s_param_type}:**
-        - **Fase 1**: Encontra {'mínimos' if s_param_type == 'S21' else 'máximos'} nos dados originais
+        st.info("""
+        **Estratégia Híbrida de Detecção:**
+        - **Fase 1**: Encontra mínimos nos dados originais
         - **Fase 2**: Refina com ajuste quadrático  
         - **Fase 3**: Valida com interpolação cúbica
         - **Fase 4**: Seleciona o melhor resultado
@@ -439,11 +396,11 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
         with col2:
             # Cálculo automático dos parâmetros usando a lógica correta
             bandwidth_result_db = find_bandwidth_points_corrected(
-                freq_interp, s_db_interp, freq_ressonancia, interp_func_db, is_db=True, s_param_type=s_param_type  # ATUALIZADO
+                freq_interp, s_db_interp, freq_ressonancia, interp_func_db, is_db=True
             )
             
             bandwidth_result_linear = find_bandwidth_points_corrected(
-                freq_interp, s_linear_interp, freq_ressonancia, interp_func_linear, is_db=False, s_param_type=s_param_type  # ATUALIZADO
+                freq_interp, s_linear_interp, freq_ressonancia, interp_func_linear, is_db=False
             )
             
             # Dentro do loop de processamento de cada ressonância:
@@ -547,7 +504,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
     
     return current_results
 
-def find_bandwidth_points_corrected(freq, y_values, center_freq, interp_func, is_db=True, s_param_type="S21"):
+def find_bandwidth_points_corrected(freq, y_values, center_freq, interp_func, is_db=True):
     """Encontra os pontos de largura de banda usando a lógica correta"""
     
     def find_crossing_points(freq_array, y_array, target_val):
@@ -763,12 +720,7 @@ def generate_txt_result_corrected(result, param_cols, params, s_param_type="S21"
     content += f"Frequência de ressonância: {result['frequencia_ressonancia_ghz']:.6f} GHz\n"
     content += f"{s_param_type} na ressonância: {result[f'{s_param_type.lower()}_ressonancia_db']:.6f} dB\n"  # ATUALIZADO
     content += f"{s_param_type} na ressonância (linear): {result[f'{s_param_type.lower()}_ressonancia_linear']:.6f}\n\n"  # ATUALIZADO
-    
-    # ATUALIZADO: Descrição baseada no tipo S
-    if s_param_type == "S21":
-        content += f"Profundidade de {s_param_type} na ressonância (linear): {(1-result[f'{s_param_type.lower()}_ressonancia_linear']):.6f}\n\n"
-    else:  # S11
-        content += f"Amplitude de {s_param_type} na ressonância (linear): {result[f'{s_param_type.lower()}_ressonancia_linear']:.6f}\n\n"
+    content += f"Profundidade de {s_param_type} na ressonância (linear): {(1-result[f'{s_param_type.lower()}_ressonancia_linear']):.6f}\n\n"  # ATUALIZADO
     
     # Parâmetros
     if param_cols[0] != '_dummy':
@@ -792,7 +744,7 @@ def generate_txt_result_corrected(result, param_cols, params, s_param_type="S21"
         content += "FIGURAS DE MÉRITO:\n"
         content += f"  Figura de mérito normal (-3dB): {result['figura_merito_normal_3db']:.6f} (Q × Sensibilidade)\n"
         content += f"  Figura de mérito normal (1/√2): {result['figura_merito_normal_linear']:.6f} (Q × Sensibilidade)\n"
-        content += f"  Figura de mérito com amplitude (-3dB): {result['figura_merito_3db']:.6f} (Q × Sensibilidade × Amplitude)\n"
+        content += f"  Figura de méito com amplitude (-3dB): {result['figura_merito_3db']:.6f} (Q × Sensibilidade × Amplitude)\n"
         content += f"  Figura de mérito com amplitude (1/√2): {result['figura_merito_linear']:.6f} (Q × Sensibilidade × Amplitude)\n"
     
     content += f"\nArquivo gerado automaticamente em: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
