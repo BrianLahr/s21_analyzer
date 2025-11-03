@@ -477,8 +477,6 @@ def format_dataframe_for_slides(df, include_header=True, include_index=False):
     output.write(separator)
     return output.getvalue()
 
-# ... (as outras funções permanecem iguais: load_and_process_files, convert_numeric_columns, etc.)
-
 def load_and_process_files(uploaded_files):
     """Carrega e processa múltiplos arquivos Excel"""
     all_data = []
@@ -600,9 +598,12 @@ def get_hover_columns(df):
     if 'ressonancia_num' in df.columns:
         hover_cols['ressonancia_num'] = True
     
-    # Adicionar outras colunas importantes
-    important_cols = ['s21_ressonancia_db', 'Q_3db', 'sensibilidade_mhz_sqrt_er', 
-                     'figura_merito_normal_3db', 'sample_height [mm]', '$perm2 []']
+    # ATUALIZADO: Adicionar outras colunas importantes para S11 e S21
+    important_cols = [
+        's21_ressonancia_db', 's11_ressonancia_db',  # AMBOS S11 e S21
+        'Q_3db', 'sensibilidade_mhz_sqrt_er', 
+        'figura_merito_normal_3db', 'sample_height [mm]', '$perm2 []'
+    ]
     
     for col in important_cols:
         if col in df.columns:

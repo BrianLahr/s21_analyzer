@@ -5,7 +5,7 @@ from scipy import interpolate
 from scipy.signal import find_peaks
 from pathlib import Path
 
-def detect_auto_ressonances(df, min_depth_db=-3.0, min_prominence=1.0, min_distance_ghz=0.01):
+def detect_auto_ressonances(df, min_depth_db=-3.0, min_prominence=1.0, min_distance_ghz=0.01, s_param_type="S21"):
     """
     Detecta automaticamente ressonâncias baseado em mínimos locais com critérios.
     
@@ -14,65 +14,82 @@ def detect_auto_ressonances(df, min_depth_db=-3.0, min_prominence=1.0, min_dista
         min_depth_db: Profundidade mínima em dB (default: -3dB)
         min_prominence: Prominência mínima do pico em dB
         min_distance_ghz: Distância mínima entre ressonâncias em GHz
+        s_param_type: Tipo de parâmetro S ("S21" ou "S11")
     
     Returns:
         Lista de dicionários com ressonâncias detectadas
     """
     try:
+        # ATUALIZADO: Colunas dinâmicas baseadas no tipo S
+        s_db_col = f'{s_param_type.lower()}_db'
+        s_linear_col = f'{s_param_type.lower()}_linear'
+        
         # Extrair arrays
         freq = df['freq_ghz'].values
-        s21_db = df['s21_db'].values
-        s21_linear = df['s21_linear'].values
+        s_db = df[s_db_col].values
+        s_linear = df[s_linear_col].values
         
         # Criar interpolação de alta precisão para refinamento
-        interp_func_db = interpolate.interp1d(freq, s21_db, kind='cubic', fill_value='extrapolate')
-        interp_func_linear = interpolate.interp1d(freq, s21_linear, kind='cubic', fill_value='extrapolate')
+        interp_func_db = interpolate.interp1d(freq, s_db, kind='cubic', fill_value='extrapolate')
+        interp_func_linear = interpolate.interp1d(freq, s_linear, kind='cubic', fill_value='extrapolate')
         
-        # Encontrar mínimos (inverter sinal pois find_peaks busca máximos)
-        inverted_s21 = -s21_db
+        # ATUALIZADO: Lógica diferente para S11 vs S21
+        if s_param_type == "S21":
+            # Para S21: buscar mínimos (ressonâncias são vales)
+            signal_for_peaks = -s_db
+            height_threshold = -min_depth_db  # Invertido para S21
+        else:  # S11
+            # Para S11: buscar máximos (ressonâncias são picos)
+            signal_for_peaks = s_db
+            height_threshold = min_depth_db  # Direto para S11
         
         # Calcular distância em pontos
         freq_range = freq[-1] - freq[0]
         min_distance_points = int(min_distance_ghz * len(freq) / freq_range)
         min_distance_points = max(5, min_distance_points)  # Mínimo de 5 pontos
         
-        # Encontrar picos (mínimos no S21 original)
+        # Encontrar picos (mínimos no S21, máximos no S11)
         peaks, properties = find_peaks(
-            inverted_s21,
+            signal_for_peaks,
             prominence=min_prominence,
             distance=min_distance_points,
-            height=-min_depth_db  # Altura mínima (invertida)
+            height=height_threshold
         )
         
         # Filtrar ressonâncias válidas
         valid_ressonances = []
         for i, peak_idx in enumerate(peaks):
             freq_ress = freq[peak_idx]
-            s21_val_db = s21_db[peak_idx]
-            s21_val_linear = s21_linear[peak_idx]
+            s_val_db = s_db[peak_idx]
+            s_val_linear = s_linear[peak_idx]
             prominence_val = properties['prominences'][i]
             
-            # Critérios de validação
-            if (s21_val_db < min_depth_db and  # Deve ser mais profundo que -3dB
-                prominence_val >= min_prominence):  # Prominência suficiente
-                
+            # ATUALIZADO: Critérios de validação diferentes para S11/S21
+            if s_param_type == "S21":
+                is_valid = (s_val_db < min_depth_db and  # Deve ser mais profundo que -3dB
+                           prominence_val >= min_prominence)  # Prominência suficiente
+            else:  # S11
+                is_valid = (s_val_db > min_depth_db and  # Deve ser maior que o threshold
+                           prominence_val >= min_prominence)  # Prominência suficiente
+            
+            if is_valid:
                 # ESTRATÉGIA HÍBRIDA: usar dados originais E interpolação
-                refined_freq, refined_s21_db, use_original = refine_minimum_location_hybrid(
-                    freq, s21_db, peak_idx, interp_func_db
+                refined_freq, refined_s_db, use_original = refine_ressonance_location_hybrid(
+                    freq, s_db, peak_idx, interp_func_db, s_param_type
                 )
                 
-                # Calcular S21 linear usando a frequência refinada
+                # Calcular S linear usando a frequência refinada
                 if use_original:
                     # Usar valor original se refinamento não foi aplicado
-                    refined_s21_linear = s21_linear[peak_idx]
+                    refined_s_linear = s_linear[peak_idx]
                 else:
-                    # Usar interpolação para S21 linear
-                    refined_s21_linear = float(interp_func_linear(refined_freq))
+                    # Usar interpolação para S linear
+                    refined_s_linear = float(interp_func_linear(refined_freq))
                 
                 valid_ressonances.append({
                     'frequencia': refined_freq,
-                    's21_db': refined_s21_db,
-                    's21_linear': refined_s21_linear,
+                    f'{s_param_type.lower()}_db': refined_s_db,
+                    f'{s_param_type.lower()}_linear': refined_s_linear,
                     'prominence': prominence_val,
                     'index': peak_idx,
                     'use_original': use_original
@@ -85,10 +102,10 @@ def detect_auto_ressonances(df, min_depth_db=-3.0, min_prominence=1.0, min_dista
         st.warning(f"⚠️ Erro na detecção automática: {e}")
         return []
 
-def refine_minimum_location_hybrid(freq, s21_db, peak_idx, interp_func_db, window_size=15):
+def refine_ressonance_location_hybrid(freq, s_db, peak_idx, interp_func_db, s_param_type="S21", window_size=15):
     """
-    Refina a localização do mínimo usando estratégia híbrida.
-    Retorna: (frequência, s21_db, use_original)
+    Refina a localização da ressonância usando estratégia híbrida.
+    Retorna: (frequência, s_db, use_original)
     """
     n = len(freq)
     start_idx = max(0, peak_idx - window_size)
@@ -96,65 +113,85 @@ def refine_minimum_location_hybrid(freq, s21_db, peak_idx, interp_func_db, windo
     
     # Pegar região ao redor do pico
     freq_region = freq[start_idx:end_idx]
-    s21_region = s21_db[start_idx:end_idx]
+    s_region = s_db[start_idx:end_idx]
     
-    # Encontrar índice do mínimo absoluto na região (dados originais)
-    min_idx_original = np.argmin(s21_region)
-    freq_min_original = freq_region[min_idx_original]
-    s21_min_original = s21_region[min_idx_original]
+    # ATUALIZADO: Encontrar extremo baseado no tipo S
+    if s_param_type == "S21":
+        # Para S21: buscar mínimo
+        extreme_idx_original = np.argmin(s_region)
+    else:  # S11
+        # Para S11: buscar máximo
+        extreme_idx_original = np.argmax(s_region)
+    
+    freq_extreme_original = freq_region[extreme_idx_original]
+    s_extreme_original = s_region[extreme_idx_original]
     
     # ESTRATÉGIA 1: Ajuste quadrático nos dados originais
     if len(freq_region) >= 5:  # Mais pontos para melhor ajuste
         try:
-            # Ajuste quadrático para encontrar mínimo exato
-            coeffs = np.polyfit(freq_region, s21_region, 2)
+            # Ajuste quadrático para encontrar extremo exato
+            coeffs = np.polyfit(freq_region, s_region, 2)
             a, b, c = coeffs
             
-            # Mínimo da parábola: x = -b/(2a)
-            if a > 0.001:  # Concavidade para cima significativa
+            # Extremo da parábola: x = -b/(2a)
+            if abs(a) > 0.001:  # Curvatura significativa
                 exact_freq = -b / (2 * a)
-                exact_s21 = a * exact_freq**2 + b * exact_freq + c
+                exact_s = a * exact_freq**2 + b * exact_freq + c
                 
-                # Verificar se está dentro da região e é melhor que o original
-                if (freq_region[0] <= exact_freq <= freq_region[-1] and
-                    exact_s21 <= s21_min_original + 0.1):  # Não pode ser pior
+                # Verificar se está dentro da região
+                if (freq_region[0] <= exact_freq <= freq_region[-1]):
                     
                     # VALIDAÇÃO: Verificar com interpolação cúbica
-                    interp_s21 = float(interp_func_db(exact_freq))
+                    interp_s = float(interp_func_db(exact_freq))
+                    
+                    # ATUALIZADO: Critério de validação baseado no tipo S
+                    if s_param_type == "S21":
+                        is_better = exact_s <= s_extreme_original + 0.1  # Não pode ser pior para S21
+                    else:
+                        is_better = exact_s >= s_extreme_original - 0.1  # Não pode ser pior para S11
                     
                     # Se a interpolação confirma, usar valor refinado
-                    if abs(exact_s21 - interp_s21) < 0.5:  # Diferença pequena
-                        return exact_freq, interp_s21, False
+                    if is_better and abs(exact_s - interp_s) < 0.5:  # Diferença pequena
+                        return exact_freq, interp_s, False
         
         except:
             pass
     
-    # ESTRATÉGIA 2: Busca por mínimos na interpolação de alta resolução
+    # ESTRATÉGIA 2: Busca por extremos na interpolação de alta resolução
     try:
         # Criar grid fino na região
         freq_fine = np.linspace(freq_region[0], freq_region[-1], 1000)
-        s21_fine = interp_func_db(freq_fine)
+        s_fine = interp_func_db(freq_fine)
         
-        # Encontrar mínimo no grid fino
-        min_idx_fine = np.argmin(s21_fine)
-        freq_min_fine = freq_fine[min_idx_fine]
-        s21_min_fine = s21_fine[min_idx_fine]
+        # ATUALIZADO: Encontrar extremo baseado no tipo S
+        if s_param_type == "S21":
+            extreme_idx_fine = np.argmin(s_fine)
+        else:  # S11
+            extreme_idx_fine = np.argmax(s_fine)
+            
+        freq_extreme_fine = freq_fine[extreme_idx_fine]
+        s_extreme_fine = s_fine[extreme_idx_fine]
         
-        # Só usar se for significativamente melhor que o original
-        if s21_min_fine < s21_min_original - 0.01:  # Pelo menos 0.01dB melhor
-            return freq_min_fine, s21_min_fine, False
+        # ATUALIZADO: Só usar se for significativamente melhor que o original
+        if s_param_type == "S21":
+            is_significantly_better = s_extreme_fine < s_extreme_original - 0.01  # Pelo menos 0.01dB melhor para S21
+        else:
+            is_significantly_better = s_extreme_fine > s_extreme_original + 0.01  # Pelo menos 0.01dB melhor para S11
+        
+        if is_significantly_better:
+            return freq_extreme_fine, s_extreme_fine, False
     
     except:
         pass
     
     # ESTRATÉGIA 3: Fallback para o melhor ponto original
-    return freq_min_original, s21_min_original, True
+    return freq_extreme_original, s_extreme_original, True
 
 def manual_ressonance_identification(df, filename, param_id, params, param_cols, perm_col, 
-                                   unique_combinations, temp_path, all_results_combined=None):
+                                   unique_combinations, temp_path, all_results_combined=None, s_param_type="S21"):
     """Permite ao usuário identificar manualmente as ressonâncias com cálculo automático."""
     
-    st.markdown("### 🔬 Identificação Manual de Ressonâncias")
+    st.markdown(f"### 🔬 Identificação Manual de Ressonâncias {s_param_type}")  # ATUALIZADO
     
     # Chave única para resultados desta curva
     results_key = f"results_{param_id}"
@@ -168,15 +205,18 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
             if key.startswith("results_"):
                 all_results_combined.extend(st.session_state[key])
     
+    # ATUALIZADO: Colunas dinâmicas baseadas no tipo S
+    s_db_col = f'{s_param_type.lower()}_db'
+    s_linear_col = f'{s_param_type.lower()}_linear'
     
     # Interpolar dados para cálculos precisos
-    interp_func_db = interpolate.interp1d(df['freq_ghz'], df['s21_db'], kind='cubic', fill_value='extrapolate')
-    interp_func_linear = interpolate.interp1d(df['freq_ghz'], df['s21_linear'], kind='cubic', fill_value='extrapolate')
+    interp_func_db = interpolate.interp1d(df['freq_ghz'], df[s_db_col], kind='cubic', fill_value='extrapolate')
+    interp_func_linear = interpolate.interp1d(df['freq_ghz'], df[s_linear_col], kind='cubic', fill_value='extrapolate')
     
     freq_min, freq_max = df['freq_ghz'].min(), df['freq_ghz'].max()
     freq_interp = np.linspace(freq_min, freq_max, 10000)
-    s21_db_interp = interp_func_db(freq_interp)
-    s21_linear_interp = interp_func_linear(freq_interp)
+    s_db_interp = interp_func_db(freq_interp)
+    s_linear_interp = interp_func_linear(freq_interp)
     
     current_results = st.session_state[results_key].copy()
     
@@ -185,14 +225,25 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        min_depth = st.number_input(
-            "Profundidade mínima (dB)",
-            min_value=-50.0,
-            max_value=0.0,
-            value=-3.0,
-            step=0.5,
-            key=f"min_depth_{param_id}"
-        )
+        # ATUALIZADO: Descrição baseada no tipo S
+        if s_param_type == "S21":
+            min_depth = st.number_input(
+                "Profundidade mínima (dB)",
+                min_value=-50.0,
+                max_value=0.0,
+                value=-3.0,
+                step=0.5,
+                key=f"min_depth_{param_id}"
+            )
+        else:  # S11
+            min_depth = st.number_input(
+                "Altura mínima (dB)",
+                min_value=-50.0,
+                max_value=0.0,
+                value=-3.0,
+                step=0.5,
+                key=f"min_depth_{param_id}"
+            )
     with col2:
         min_prominence = st.number_input(
             "Prominência mínima (dB)",
@@ -214,9 +265,9 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
     
     # Adicionar informações sobre a estratégia de detecção
     with st.expander("🔧 Configurações Avançadas de Detecção"):
-        st.info("""
-        **Estratégia Híbrida de Detecção:**
-        - **Fase 1**: Encontra mínimos nos dados originais
+        st.info(f"""
+        **Estratégia Híbrida de Detecção {s_param_type}:**
+        - **Fase 1**: Encontra {'mínimos' if s_param_type == 'S21' else 'máximos'} nos dados originais
         - **Fase 2**: Refina com ajuste quadrático  
         - **Fase 3**: Valida com interpolação cúbica
         - **Fase 4**: Seleciona o melhor resultado
@@ -237,7 +288,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
         
         with st.spinner("Procurando ressonâncias..."):
             auto_ressonances = detect_auto_ressonances(
-                df, min_depth, min_prominence, min_distance
+                df, min_depth, min_prominence, min_distance, s_param_type  # ATUALIZADO
             )
             
             # CORREÇÃO: Armazenar resultados temporariamente
@@ -260,7 +311,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 for i, ress in enumerate(auto_ressonances):
                     method = "Original" if ress['use_original'] else "Refinada"
                     st.write(f"**Ressonância {i+1}:** {ress['frequencia']:.6f} GHz "
-                           f"(S21: {ress['s21_db']:.3f} dB, Método: {method})")
+                           f"({s_param_type}: {ress[f'{s_param_type.lower()}_db']:.3f} dB, Método: {method})")  # ATUALIZADO
             
             # Botão para aplicar os resultados
             if st.button("🔄 Aplicar Ressonâncias Detectadas", key=f"apply_{param_id}"):
@@ -274,8 +325,8 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                         'parametros': param_id,
                         'ressonancia_num': i + 1,
                         'frequencia_ressonancia_ghz': ress['frequencia'],
-                        's21_ressonancia_db': ress['s21_db'],
-                        's21_ressonancia_linear': ress['s21_linear'],
+                        f'{s_param_type.lower()}_ressonancia_db': ress[f'{s_param_type.lower()}_db'],  # ATUALIZADO
+                        f'{s_param_type.lower()}_ressonancia_linear': ress[f'{s_param_type.lower()}_linear'],  # ATUALIZADO
                         'fwhm_3db_ghz': None,
                         'Q_3db': None,
                         'fwhm_linear_ghz': None,
@@ -343,8 +394,8 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 'parametros': param_id,
                 'ressonancia_num': i + 1,
                 'frequencia_ressonancia_ghz': default_freq,
-                's21_ressonancia_db': None,
-                's21_ressonancia_linear': None,
+                f'{s_param_type.lower()}_ressonancia_db': None,  # ATUALIZADO
+                f'{s_param_type.lower()}_ressonancia_linear': None,  # ATUALIZADO
                 'fwhm_3db_ghz': None,
                 'Q_3db': None,
                 'fwhm_linear_ghz': None,
@@ -377,22 +428,22 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 key=f"freq_{param_id}_{i}"
             )
             
-            # Calcular S21 atualizado para a frequência selecionada
-            s21_ressonancia_db = float(interp_func_db(freq_ressonancia))
-            s21_ressonancia_linear = float(interp_func_linear(freq_ressonancia))
+            # Calcular S atualizado para a frequência selecionada
+            s_ressonancia_db = float(interp_func_db(freq_ressonancia))
+            s_ressonancia_linear = float(interp_func_linear(freq_ressonancia))
             
             st.write(f"**Frequência:** {freq_ressonancia:.6f} GHz")
-            st.write(f"**S21:** {s21_ressonancia_db:.4f} dB")
-            st.write(f"**S21 (linear):** {s21_ressonancia_linear:.6f}")
+            st.write(f"**{s_param_type}:** {s_ressonancia_db:.4f} dB")  # ATUALIZADO
+            st.write(f"**{s_param_type} (linear):** {s_ressonancia_linear:.6f}")  # ATUALIZADO
         
         with col2:
             # Cálculo automático dos parâmetros usando a lógica correta
             bandwidth_result_db = find_bandwidth_points_corrected(
-                freq_interp, s21_db_interp, freq_ressonancia, interp_func_db, is_db=True
+                freq_interp, s_db_interp, freq_ressonancia, interp_func_db, is_db=True, s_param_type=s_param_type  # ATUALIZADO
             )
             
             bandwidth_result_linear = find_bandwidth_points_corrected(
-                freq_interp, s21_linear_interp, freq_ressonancia, interp_func_linear, is_db=False
+                freq_interp, s_linear_interp, freq_ressonancia, interp_func_linear, is_db=False, s_param_type=s_param_type  # ATUALIZADO
             )
             
             # Dentro do loop de processamento de cada ressonância:
@@ -404,8 +455,8 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                 sensitivity_data = None
                 try:
                     sensitivity_data = calculate_sensitivity_corrected(
-                        freq_ressonancia, params, perm_col, unique_combinations, Q_db, Q_linear, s21_ressonancia_linear,
-                        param_id, all_results_combined
+                        freq_ressonancia, params, perm_col, unique_combinations, Q_db, Q_linear, s_ressonancia_linear,
+                        param_id, all_results_combined, s_param_type  # ATUALIZADO
                     )
                 except Exception as e:
                     # Não mostrar erro, apenas não calcular sensibilidade nesta fase
@@ -422,8 +473,8 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     'parametros': param_id,
                     'ressonancia_num': i + 1,
                     'frequencia_ressonancia_ghz': freq_ressonancia,
-                    's21_ressonancia_db': s21_ressonancia_db,
-                    's21_ressonancia_linear': s21_ressonancia_linear,
+                    f'{s_param_type.lower()}_ressonancia_db': s_ressonancia_db,  # ATUALIZADO
+                    f'{s_param_type.lower()}_ressonancia_linear': s_ressonancia_linear,  # ATUALIZADO
                     'fwhm_3db_ghz': fwhm_db,
                     'Q_3db': Q_db,
                     'fwhm_linear_ghz': fwhm_linear,
@@ -480,7 +531,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
                     """)
                 
                 # Salvar resultado automaticamente em TXT
-                txt_content = generate_txt_result_corrected(result, param_cols, params)
+                txt_content = generate_txt_result_corrected(result, param_cols, params, s_param_type)  # ATUALIZADO
                 txt_filename = f"resultado_{Path(filename).stem}_{param_id}_ressonancia_{i+1}.txt"
                 txt_path = temp_path / txt_filename
                 with open(txt_path, 'w') as f:
@@ -496,7 +547,7 @@ def manual_ressonance_identification(df, filename, param_id, params, param_cols,
     
     return current_results
 
-def find_bandwidth_points_corrected(freq, y_values, center_freq, interp_func, is_db=True):
+def find_bandwidth_points_corrected(freq, y_values, center_freq, interp_func, is_db=True, s_param_type="S21"):
     """Encontra os pontos de largura de banda usando a lógica correta"""
     
     def find_crossing_points(freq_array, y_array, target_val):
@@ -557,7 +608,7 @@ def find_bandwidth_points_corrected(freq, y_values, center_freq, interp_func, is
         return freq_left_linear, freq_right_linear, fwhm_linear, Q_linear
 
 def calculate_sensitivity_corrected(freq_ressonancia, params, perm_col, unique_combinations, 
-                                  Q_db, Q_linear, amplitude_linear, current_param_id, all_results):
+                                  Q_db, Q_linear, amplitude_linear, current_param_id, all_results, s_param_type="S21"):
     """Calcula sensibilidade e ambas as figuras de mérito - VERSÃO CORRIGIDA"""
     
     # Verificar se temos todos os valores necessários
@@ -579,8 +630,8 @@ def calculate_sensitivity_corrected(freq_ressonancia, params, perm_col, unique_c
             next_perm = unique_perms[current_index + 1]
             
             # CORREÇÃO: Encontrar todas as ressonâncias para a permissividade atual e próxima
-            current_ressonances = get_ressonances_for_permittivity(all_results, params, perm_col, current_perm)
-            next_ressonances = get_ressonances_for_permittivity(all_results, params, perm_col, next_perm)
+            current_ressonances = get_ressonances_for_permittivity(all_results, params, perm_col, current_perm, s_param_type)  # ATUALIZADO
+            next_ressonances = get_ressonances_for_permittivity(all_results, params, perm_col, next_perm, s_param_type)  # ATUALIZADO
             
             if not current_ressonances or not next_ressonances:
                 return None, None, None, None, None
@@ -619,7 +670,7 @@ def calculate_sensitivity_corrected(freq_ressonancia, params, perm_col, unique_c
         st.warning(f"⚠️ Não foi possível calcular sensibilidade: {e}")
         return None, None, None, None, None
 
-def get_ressonances_for_permittivity(all_results, current_params, perm_col, target_perm):
+def get_ressonances_for_permittivity(all_results, current_params, perm_col, target_perm, s_param_type="S21"):
     """
     Encontra todas as ressonâncias para uma determinada permissividade,
     mantendo os mesmos valores dos outros parâmetros.
@@ -643,7 +694,7 @@ def get_ressonances_for_permittivity(all_results, current_params, perm_col, targ
             if params_match:
                 target_ressonances.append({
                     'freq': result['frequencia_ressonancia_ghz'],
-                    's21_db': result['s21_ressonancia_db'],
+                    f'{s_param_type.lower()}_db': result[f'{s_param_type.lower()}_ressonancia_db'],  # ATUALIZADO
                     'ressonancia_num': result['ressonancia_num']
                 })
         
@@ -701,17 +752,23 @@ def find_corresponding_ressonance(current_freq, current_ressonances, next_resson
         st.warning(f"⚠️ Erro ao encontrar ressonância correspondente: {e}")
         return None
 
-def generate_txt_result_corrected(result, param_cols, params):
+def generate_txt_result_corrected(result, param_cols, params, s_param_type="S21"):
     """Gera conteúdo TXT com resultados incluindo ambas as figuras de mérito"""
     
-    content = "RESULTADOS DA ANÁLISE S21 - IDENTIFICAÇÃO MANUAL\n"
+    # ATUALIZADO: Título baseado no tipo S
+    content = f"RESULTADOS DA ANÁLISE {s_param_type} - IDENTIFICAÇÃO MANUAL\n"
     content += "=" * 60 + "\n\n"
     
     content += f"Ressonância: {result['ressonancia_num']}\n"
     content += f"Frequência de ressonância: {result['frequencia_ressonancia_ghz']:.6f} GHz\n"
-    content += f"S21 na ressonância: {result['s21_ressonancia_db']:.6f} dB\n"
-    content += f"S21 na ressonância (linear): {result['s21_ressonancia_linear']:.6f}\n\n"
-    content += f"Profundidade de S21 na ressonância (linear): {(1-result['s21_ressonancia_linear']):.6f}\n\n"
+    content += f"{s_param_type} na ressonância: {result[f'{s_param_type.lower()}_ressonancia_db']:.6f} dB\n"  # ATUALIZADO
+    content += f"{s_param_type} na ressonância (linear): {result[f'{s_param_type.lower()}_ressonancia_linear']:.6f}\n\n"  # ATUALIZADO
+    
+    # ATUALIZADO: Descrição baseada no tipo S
+    if s_param_type == "S21":
+        content += f"Profundidade de {s_param_type} na ressonância (linear): {(1-result[f'{s_param_type.lower()}_ressonancia_linear']):.6f}\n\n"
+    else:  # S11
+        content += f"Amplitude de {s_param_type} na ressonância (linear): {result[f'{s_param_type.lower()}_ressonancia_linear']:.6f}\n\n"
     
     # Parâmetros
     if param_cols[0] != '_dummy':

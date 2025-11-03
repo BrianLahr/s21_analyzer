@@ -110,13 +110,14 @@ def display_existing_analysis(analysis_data, filename):
             elif file.is_dir():
                 shutil.rmtree(file)
 
-        # Salvar Excel
+        # ATUALIZADO: Nome do arquivo adaptado para S11/S21
+        s_type = st.session_state.get('s_param_type', 'S21')
         excel_path = temp_path / f"resultados_completos_{Path(filename).stem}.xlsx"
         with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
             results_df.to_excel(writer, sheet_name='Resultados', index=False)
 
-        # Criar arquivo ZIP
-        zip_path = temp_path / f"resultados_analise_s21_{Path(filename).stem}.zip"
+        # ATUALIZADO: Nome do ZIP adaptado para S11/S21
+        zip_path = temp_path / f"resultados_analise_{s_type.lower()}_{Path(filename).stem}.zip"
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             zip_file.write(excel_path, excel_path.name)
             for txt_file in temp_path.glob("*.txt"):
@@ -124,11 +125,11 @@ def display_existing_analysis(analysis_data, filename):
 
         st.success(f"✅ Análise concluída! Total de {len(all_results)} ressonâncias analisadas.")
 
-        # Botão para download
+        # ATUALIZADO: Botão de download com label adaptado
         with open(zip_path, 'rb') as f:
             zip_data = f.read()
         st.download_button(
-            label="📥 Baixar Todos os Resultados (ZIP)",
+            label=f"📥 Baixar Todos os Resultados {s_type} (ZIP)",
             data=zip_data,
             file_name=zip_path.name,
             mime="application/zip",

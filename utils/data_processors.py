@@ -4,10 +4,10 @@ import numpy as np
 from pathlib import Path
 import tempfile
 
-def identify_columns(df: pd.DataFrame):
-    """Identifica automaticamente colunas de frequência, S21, parâmetros e permissividade."""
+def identify_columns(df: pd.DataFrame, s_param_type: str = "S21"):
+    """Identifica automaticamente colunas de frequência, S11/S21, parâmetros e permissividade."""
     freq_col = None
-    s21_col = None
+    s_col = None  # ATUALIZADO: nome mais genérico
     param_cols = []
     perm_col = None
 
@@ -15,32 +15,42 @@ def identify_columns(df: pd.DataFrame):
         col_lower = str(col).lower()
         if any(x in col_lower for x in ['freq', 'frequency', 'ghz', 'mhz']):
             freq_col = col
-        elif any(x in col_lower for x in ['s21', 's(2,1)', 'db(s(2,1))', 'insertion']):
-            s21_col = col
+        elif s_param_type == "S21" and any(x in col_lower for x in ['s21', 's(2,1)', 'db(s(2,1))', 'insertion']):
+            s_col = col
+        elif s_param_type == "S11" and any(x in col_lower for x in ['s11', 's(1,1)', 'db(s(1,1))', 'reflection', 'return']):
+            s_col = col
         elif any(x in col_lower for x in ['perm', 'permittivity', 'epsilon', 'dielectric']):
             perm_col = col
             param_cols.append(col)
-        elif col not in [freq_col, s21_col]:
+        elif col not in [freq_col, s_col]:
             param_cols.append(col)
 
-    # Se não encontrou S21, usar a primeira coluna numérica diferente de freq
-    if s21_col is None and freq_col is not None:
+    # Se não encontrou S11/S21, usar a primeira coluna numérica diferente de freq
+    if s_col is None and freq_col is not None:
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         other_numeric = [col for col in numeric_cols if col != freq_col]
         if other_numeric:
-            s21_col = other_numeric[0]
+            s_col = other_numeric[0]
+            st.warning(f"⚠️ Coluna {s_param_type} não identificada automaticamente. Usando '{s_col}'")
 
-    return freq_col, s21_col, param_cols, perm_col
+    return freq_col, s_col, param_cols, perm_col
 
-def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, param_cols: list, perm_col: str):
+def process_data(df: pd.DataFrame, filename: str, freq_col: str, s_col: str, param_cols: list, perm_col: str, s_param_type: str = "S21"):
     """Processa dados e mostra gráfico + campos de análise juntos para cada combinação"""
     
-    temp_path = Path(tempfile.mkdtemp(prefix="s21_analysis_"))
+    # ATUALIZADO: Nome do diretório temporário adaptado
+    temp_path = Path(tempfile.mkdtemp(prefix=f"{s_param_type.lower()}_analysis_"))
     
     df_processed = df.copy()
-    df_processed = df_processed.rename(columns={freq_col: 'freq_ghz', s21_col: 's21_db'})
-    df_processed['s21_linear'] = 10 ** (df_processed['s21_db'] / 20)
-
+    df_processed = df_processed.rename(columns={freq_col: 'freq_ghz', s_col: f'{s_param_type.lower()}_db'})  # ATUALIZADO
+    
+    # ATUALIZADO: Converter para linear baseado no tipo S
+    if s_param_type == "S21":
+        df_processed[f'{s_param_type.lower()}_linear'] = 10 ** (df_processed[f'{s_param_type.lower()}_db'] / 20)
+    elif s_param_type == "S11":
+        # Para S11, o valor em linear é diferente (magnitude da reflexão)
+        df_processed[f'{s_param_type.lower()}_linear'] = 10 ** (df_processed[f'{s_param_type.lower()}_db'] / 20)
+    
     if param_cols:
         unique_combinations = df_processed[param_cols].drop_duplicates()
         st.write(f"**📊 Combinações de parâmetros encontradas:** {len(unique_combinations)}")
@@ -67,17 +77,17 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
             combo = {}
 
         st.markdown("---")
-        st.markdown(f"## 📈 Análise: {param_id}")
+        st.markdown(f"## 📈 Análise {s_param_type}: {param_id}")  # ATUALIZADO
         
         from utils.plot_generators import plot_interactive_curve
-        plot_interactive_curve(df_subset, param_id, params=combo, param_cols=param_cols)
+        plot_interactive_curve(df_subset, param_id, params=combo, param_cols=param_cols, s_param_type=s_param_type)  # ATUALIZADO
         
         from utils.calculation_engines import manual_ressonance_identification
         
-        # CORREÇÃO: Primeiro executar a identificação sem all_results
+        # ATUALIZADO: Passar s_param_type para a função de identificação
         results = manual_ressonance_identification(
             df_subset, filename, param_id, combo, param_cols, perm_col, 
-            unique_combinations, temp_path, None  # Passar None inicialmente
+            unique_combinations, temp_path, None, s_param_type  # ATUALIZADO
         )
         
         results_key = f"results_{param_id}"
@@ -111,8 +121,8 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
                         sensitivity, figure_of_merit_db, figure_of_merit_linear, figure_of_merit_normal_db, figure_of_merit_normal_linear = calculate_sensitivity_corrected(
                             result['frequencia_ressonancia_ghz'], 
                             combo, perm_col, unique_combinations, 
-                            result['Q_3db'], result['Q_linear'], result['s21_ressonancia_linear'],
-                            param_id, all_results
+                            result['Q_3db'], result['Q_linear'], result[f'{s_param_type.lower()}_ressonancia_linear'],  # ATUALIZADO
+                            param_id, all_results, s_param_type  # ATUALIZADO
                         )
                         
                         # Atualizar resultado
@@ -130,8 +140,6 @@ def process_data(df: pd.DataFrame, filename: str, freq_col: str, s21_col: str, p
         all_results = updated_all_results
 
     return temp_path, all_results
-
-
 
 def reset_analysis_state(filename: str):
     """Reseta o estado da análise para um arquivo específico"""

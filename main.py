@@ -11,31 +11,34 @@ from utils.data_processors import identify_columns, process_data
 def setup_ui():
     """Configuração inicial de layout"""
     st.set_page_config(
-        page_title="Analisador S21",
+        page_title="Analisador S-Parameters",  # ATUALIZADO: Título mais genérico
         page_icon="📊",
         layout="wide",
         initial_sidebar_state="expanded"
     )
 
-    # CORREÇÃO: REMOVER CSS FIXO para adaptar ao modo escuro automaticamente
-    st.markdown('<h1 style="text-align: center; margin-bottom: 2rem;">📊 Analisador de Parâmetros S21</h1>', unsafe_allow_html=True)
+    # ATUALIZADO: Título adaptado para S11/S21
+    st.markdown('<h1 style="text-align: center; margin-bottom: 2rem;">📊 Analisador de Parâmetros S (S11/S21)</h1>', unsafe_allow_html=True)
     st.markdown("---")
 
     # Sidebar
     st.sidebar.title("ℹ️ Sobre")
     st.sidebar.info(
-        "Esta aplicação analisa ressonâncias em dados S21 de arquivos CSV. "
+        "Esta aplicação analisa ressonâncias em dados S11 ou S21 de arquivos CSV. "  # ATUALIZADO
         "Altere as frequências para calcular automaticamente os parâmetros."
     )
 
-    # NOVO: Sistema de abas
-    tab1, tab2 = st.tabs(["📈 Análise de Dados S21", "📊 Visualização de Resultados"])
+    # NOVO: Seleção do tipo de parâmetro S
+    if 's_param_type' not in st.session_state:
+        st.session_state.s_param_type = "S21"  # Padrão
+
+    # ATUALIZADO: Sistema de abas com título adaptado
+    tab1, tab2 = st.tabs(["📈 Análise de Dados S11/S21", "📊 Visualização de Resultados"])
     
     with tab1:
         run_analysis_tab()
     
     with tab2:
-        # CORREÇÃO: Importação dentro do bloco para evitar erro de importação circular
         try:
             from utils.results_visualizer import create_results_visualizer
             create_results_visualizer()
@@ -49,6 +52,8 @@ def setup_ui():
 def reset_app():
     """Reset completo do estado da aplicação"""
     st.session_state.clear()
+    # Restaurar o padrão S21 após reset
+    st.session_state.s_param_type = "S21"
     st.rerun()
 
 # ======================
@@ -80,13 +85,14 @@ def export_analysis(temp_path, all_results, filename):
         elif file.is_dir():
             shutil.rmtree(file)
 
-    # Salvar Excel
+    # ATUALIZADO: Nome do arquivo adaptado
     excel_path = temp_path / f"resultados_completos_{Path(filename).stem}.xlsx"
     with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
         results_df.to_excel(writer, sheet_name='Resultados', index=False)
 
-    # Criar ZIP
-    zip_path = temp_path / f"resultados_analise_s21_{Path(filename).stem}.zip"
+    # ATUALIZADO: Nome do ZIP adaptado
+    s_type = st.session_state.get('s_param_type', 'S21')
+    zip_path = temp_path / f"resultados_analise_{s_type.lower()}_{Path(filename).stem}.zip"
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         zip_file.write(excel_path, excel_path.name)
         for txt_file in temp_path.glob("*.txt"):
@@ -96,7 +102,7 @@ def export_analysis(temp_path, all_results, filename):
     with open(zip_path, 'rb') as f:
         zip_data = f.read()
     st.download_button(
-        label="📥 Baixar Todos os Resultados (ZIP)",
+        label=f"📥 Baixar Todos os Resultados {s_type} (ZIP)",  # ATUALIZADO
         data=zip_data,
         file_name=zip_path.name,
         mime="application/zip",
@@ -111,7 +117,7 @@ def main():
     setup_ui()
 
 def run_analysis_tab():
-    """Executa a aba de análise de dados S21"""
+    """Executa a aba de análise de dados S11/S21"""  # ATUALIZADO
     # Inicializar session_state
     if 'uploaded_file_data' not in st.session_state:
         st.session_state.uploaded_file_data = None
@@ -121,10 +127,31 @@ def run_analysis_tab():
         st.session_state.uploader_key = 0
     if 'export_ready' not in st.session_state:
         st.session_state.export_ready = False
+    if 's_param_type' not in st.session_state:
+        st.session_state.s_param_type = "S21"
+
+    # NOVO: Seleção do tipo de parâmetro S
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔧 Configurações")
+    s_param_type = st.sidebar.radio(
+        "Tipo de Parâmetro S:",
+        ["S11", "S21"],
+        index=0 if st.session_state.s_param_type == "S11" else 1,
+        key="s_param_selector"
+    )
+    
+    # Atualizar session_state se mudou
+    if s_param_type != st.session_state.s_param_type:
+        st.session_state.s_param_type = s_param_type
+        st.session_state.uploaded_file_data = None
+        st.session_state.analysis_results = None
+        st.session_state.export_ready = False
+        st.session_state.uploader_key += 1
+        st.rerun()
 
     # Upload do arquivo
     uploaded_file = st.file_uploader(
-        "**Selecione o arquivo CSV**",
+        f"**Selecione o arquivo CSV com dados {s_param_type}**",  # ATUALIZADO
         type=['csv'],
         key=f"file_uploader_{st.session_state.uploader_key}"
     )
@@ -139,42 +166,44 @@ def run_analysis_tab():
                     'name': uploaded_file.name,
                     'df': df,
                     'freq_col': None,
-                    's21_col': None,
+                    's_col': None,  # ATUALIZADO: nome mais genérico
                     'param_cols': None,
-                    'perm_col': None
+                    'perm_col': None,
+                    's_param_type': s_param_type  # NOVO: armazenar tipo S
                 }
                 st.session_state.export_ready = False
 
             # Preview do arquivo
             display_file_preview(df, uploaded_file)
 
-            # Identificação de colunas
+            # Identificação de colunas - ATUALIZADO para aceitar S11 ou S21
             data_info = st.session_state.uploaded_file_data
-            if data_info['freq_col'] is None or data_info['s21_col'] is None:
-                freq_col, s21_col, param_cols, perm_col = identify_columns(df)
+            if data_info['s_col'] is None:  # ATUALIZADO
+                freq_col, s_col, param_cols, perm_col = identify_columns(df, s_param_type)  # ATUALIZADO
                 data_info.update({
                     'freq_col': freq_col,
-                    's21_col': s21_col,
+                    's_col': s_col,  # ATUALIZADO
                     'param_cols': param_cols,
-                    'perm_col': perm_col
+                    'perm_col': perm_col,
+                    's_param_type': s_param_type  # NOVO
                 })
             else:
                 freq_col = data_info['freq_col']
-                s21_col = data_info['s21_col']
+                s_col = data_info['s_col']  # ATUALIZADO
                 param_cols = data_info['param_cols']
                 perm_col = data_info['perm_col']
 
-            if not freq_col or not s21_col:
-                st.error("❌ Não foi possível identificar colunas de frequência e S21 automaticamente.")
+            if not freq_col or not s_col:  # ATUALIZADO
+                st.error(f"❌ Não foi possível identificar colunas de frequência e {s_param_type} automaticamente.")
                 return
-            st.success(f"✅ Colunas identificadas: Frequência='{freq_col}', S21='{s21_col}'")
+            st.success(f"✅ Colunas identificadas: Frequência='{freq_col}', {s_param_type}='{s_col}'")
 
-            # Processar dados
+            # Processar dados - ATUALIZADO
             analysis_container = st.container()
             
             with analysis_container:
                 temp_path, all_results_combined = process_data(
-                    df, uploaded_file.name, freq_col, s21_col, param_cols, perm_col
+                    df, uploaded_file.name, freq_col, s_col, param_cols, perm_col, s_param_type  # ATUALIZADO
                 )
                 
                 st.session_state.analysis_results = (temp_path, all_results_combined)
@@ -202,7 +231,7 @@ def run_analysis_tab():
         except Exception as e:
             st.error(f"❌ Erro ao processar arquivo: {e}")
     else:
-        st.info("👆 Faça upload de um arquivo CSV para iniciar a análise")
+        st.info(f"👆 Faça upload de um arquivo CSV com dados {s_param_type} para iniciar a análise")  # ATUALIZADO
         st.session_state.analysis_results = None
         st.session_state.uploaded_file_data = None
         st.session_state.export_ready = False
