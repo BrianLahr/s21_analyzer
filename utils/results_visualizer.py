@@ -1,13 +1,3 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from pathlib import Path
-import io
-import base64
-
 def create_results_visualizer():
     """Cria a interface para visualização e análise de resultados exportados"""
     
@@ -37,7 +27,78 @@ def create_results_visualizer():
         st.error("❌ Nenhum dado válido encontrado nos arquivos carregados.")
         return
     
-    # NOVA FUNCIONALIDADE: Seletor de colunas para remover
+    # NOVA FUNCIONALIDADE: Gráfico de Comparação de Curvas S11/S21
+    st.markdown("---")
+    st.markdown("## 📈 Gráfico de Comparação de Curvas S11/S21")
+    
+    # Detectar automaticamente o tipo S (S11 ou S21)
+    s_param_type = "S21"  # Padrão
+    if 's11_ressonancia_db' in all_data.columns:
+        s_param_type = "S11"
+    elif 's21_ressonancia_db' in all_data.columns:
+        s_param_type = "S21"
+    
+    col_type, col_info = st.columns([1, 3])
+    with col_type:
+        s_param_display = st.selectbox(
+            "Tipo de Parâmetro S para Plotar:",
+            ["S11", "S21"],
+            index=0 if s_param_type == "S11" else 1,
+            key="s_param_display"
+        )
+    
+    with col_info:
+        st.info(f"""
+        **📋 Instruções:**
+        - Gráfico agrupa curvas por **sample_height** (cores diferentes)
+        - Cada **permissividade** recebe tons diferentes da mesma cor
+        - Ideal para análise visual comparativa
+        - Use o menu de contexto do gráfico para salvar como imagem
+        """)
+    
+    # Verificar se temos dados suficientes
+    has_sample_height = 'sample_height [mm]' in all_data.columns
+    has_freq_data = 'freq_ghz' in all_data.columns
+    has_s_data = f'{s_param_display.lower()}_db' in all_data.columns
+    
+    if not (has_sample_height and has_freq_data and has_s_data):
+        st.warning(f"""
+        ⚠️ Dados insuficientes para gerar gráfico de comparação.
+        Necessárias colunas: 'sample_height [mm]', 'freq_ghz', '{s_param_display.lower()}_db'
+        """)
+    else:
+        # Gerar gráfico de comparação
+        from utils.plot_generators import plot_curves_comparison
+        
+        comparison_fig = plot_curves_comparison(all_data, s_param_display)
+        
+        if comparison_fig:
+            st.plotly_chart(comparison_fig, use_container_width=True)
+            
+            # Botão para download da imagem
+            col_download, col_stats = st.columns([1, 2])
+            
+            with col_download:
+                # Converter figura para imagem para download
+                img_bytes = comparison_fig.to_image(format="png", width=1200, height=600, scale=2)
+                st.download_button(
+                    label="📥 Baixar Gráfico como PNG",
+                    data=img_bytes,
+                    file_name=f"comparacao_curvas_{s_param_display}.png",
+                    mime="image/png",
+                    help="Baixe o gráfico em alta resolução para relatórios"
+                )
+            
+            with col_stats:
+                # Estatísticas do gráfico
+                sample_heights = all_data['sample_height [mm]'].nunique()
+                if '$perm2 []' in all_data.columns:
+                    perms = all_data['$perm2 []'].nunique()
+                    st.info(f"📊 Gráfico contém {sample_heights} alturas diferentes × {perms} permissividades")
+                else:
+                    st.info(f"📊 Gráfico contém {sample_heights} alturas diferentes")
+    
+    # CONTINUAÇÃO DO CÓDIGO ORIGINAL (a parte existente da visualização)
     st.markdown("---")
     st.markdown("### 🗂️ Gerenciamento de Colunas e Linhas")
     

@@ -11,29 +11,31 @@ from utils.data_processors import identify_columns, process_data
 def setup_ui():
     """Configuração inicial de layout"""
     st.set_page_config(
-        page_title="Analisador S-Parameters",  # ATUALIZADO: Título mais genérico
-        page_icon="📊",
+        page_title="Analisador S-Parameters",
+        page_icon="📊", 
         layout="wide",
         initial_sidebar_state="expanded"
     )
 
-    # ATUALIZADO: Título adaptado para S11/S21
     st.markdown('<h1 style="text-align: center; margin-bottom: 2rem;">📊 Analisador de Parâmetros S (S11/S21)</h1>', unsafe_allow_html=True)
     st.markdown("---")
 
     # Sidebar
     st.sidebar.title("ℹ️ Sobre")
     st.sidebar.info(
-        "Esta aplicação analisa ressonâncias em dados S11 ou S21 de arquivos CSV. "  # ATUALIZADO
+        "Esta aplicação analisa ressonâncias em dados S11 ou S21 de arquivos CSV. "
         "Altere as frequências para calcular automaticamente os parâmetros."
     )
 
-    # NOVO: Seleção do tipo de parâmetro S
     if 's_param_type' not in st.session_state:
-        st.session_state.s_param_type = "S21"  # Padrão
+        st.session_state.s_param_type = "S21"
 
-    # ATUALIZADO: Sistema de abas com título adaptado
-    tab1, tab2 = st.tabs(["📈 Análise de Dados S11/S21", "📊 Visualização de Resultados"])
+    # ATUALIZADO: Adicionar terceira aba para comparação de curvas
+    tab1, tab2, tab3 = st.tabs([
+        "📈 Análise de Dados S11/S21", 
+        "📊 Visualização de Resultados",
+        "🔄 Comparação de Curvas"  # NOVA ABA
+    ])
     
     with tab1:
         run_analysis_tab()
@@ -44,8 +46,13 @@ def setup_ui():
             create_results_visualizer()
         except ImportError as e:
             st.error(f"❌ Erro ao carregar o visualizador de resultados: {e}")
-            st.info("⚠️ Certifique-se de que o arquivo `results_visualizer.py` está na pasta `utils/`")
-
+    
+    with tab3:
+        try:
+            from utils.results_visualizer import create_curves_comparison
+            create_curves_comparison()
+        except ImportError as e:
+            st.error(f"❌ Erro ao carregar o comparador de curvas: {e}")
 # ======================
 # Reset de aplicação
 # ======================

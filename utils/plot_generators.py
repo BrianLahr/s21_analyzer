@@ -106,3 +106,154 @@ def plot_interactive_curve(df, param_id, params, param_cols, s_param_type="S21")
         
     except Exception as e:
         st.error(f"❌ Erro ao plotar a curva {param_id}: {e}")
+
+
+def plot_curves_comparison(df, s_param_type="S21"):
+    """
+    Gera gráfico comparativo de curvas S11/S21 agrupadas por sample_height 
+    e com cores diferentes para cada permissividade.
+    """
+    
+    if df.empty:
+        st.warning("⚠️ Nenhum dado disponível para plotar.")
+        return None
+    
+    # Verificar colunas necessárias
+    required_cols = ['freq_ghz', f'{s_param_type.lower()}_db']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        st.error(f"❌ Colunas necessárias não encontradas: {missing_cols}")
+        return None
+    
+    # Verificar se temos as colunas de agrupamento
+    has_sample_height = 'sample_height [mm]' in df.columns
+    has_permittivity = '$perm2 []' in df.columns
+    
+    if not has_sample_height:
+        st.warning("⚠️ Coluna 'sample_height [mm]' não encontrada para agrupamento.")
+        return None
+    
+    # Criar figura
+    fig = go.Figure()
+    
+    # Obter combinações únicas de sample_height e permissividade
+    if has_permittivity:
+        unique_combinations = df[['sample_height [mm]', '$perm2 []']].drop_duplicates()
+        # Ordenar por sample_height e depois por permissividade
+        unique_combinations = unique_combinations.sort_values(['sample_height [mm]', '$perm2 []'])
+    else:
+        unique_combinations = df[['sample_height [mm]']].drop_duplicates()
+        unique_combinations = unique_combinations.sort_values('sample_height [mm]')
+        unique_combinations['$perm2 []'] = 'N/A'
+    
+    # Definir paleta de cores por sample_height
+    sample_heights = sorted(unique_combinations['sample_height [mm]'].unique())
+    color_palettes = {
+        'Vermelho': px.colors.sequential.Reds,
+        'Azul': px.colors.sequential.Blues,
+        'Verde': px.colors.sequential.Greens,
+        'Roxo': px.colors.sequential.Purples,
+        'Laranja': px.colors.sequential.Oranges,
+        'Cinza': px.colors.sequential.Greys
+    }
+    
+    # Mapear cada sample_height para uma paleta
+    height_to_palette = {}
+    available_palettes = list(color_palettes.keys())
+    
+    for i, height in enumerate(sample_heights):
+        palette_name = available_palettes[i % len(available_palettes)]
+        height_to_palette[height] = color_palettes[palette_name]
+    
+    # Plotar cada curva
+    for _, combo in unique_combinations.iterrows():
+        sample_height = combo['sample_height [mm]']
+        permittivity = combo['$perm2 []']
+        
+        # Filtrar dados para esta combinação
+        if has_permittivity:
+            mask = (df['sample_height [mm]'] == sample_height) & (df['$perm2 []'] == permittivity)
+        else:
+            mask = (df['sample_height [mm]'] == sample_height)
+        
+        df_subset = df[mask].copy()
+        
+        if df_subset.empty:
+            continue
+        
+        # Ordenar por frequência
+        df_subset = df_subset.sort_values('freq_ghz')
+        
+        # Escolher cor baseada no sample_height e permissividade
+        palette = height_to_palette[sample_height]
+        perm_values = unique_combinations[unique_combinations['sample_height [mm]'] == sample_height]['$perm2 []'].unique()
+        
+        if len(perm_values) > 1:
+            # Múltiplas permissividades para mesma altura - usar tons diferentes
+            perm_index = list(perm_values).index(permittivity)
+            color_index = min(perm_index * 2 + 2, len(palette) - 1)  # Pular tons muito claros
+            line_color = palette[color_index]
+        else:
+            # Apenas uma permissividade - usar cor média da paleta
+            line_color = palette[len(palette) // 2]
+        
+        # Criar label da legenda
+        if has_permittivity:
+            legend_label = f"Altura: {sample_height} mm, εr: {permittivity}"
+        else:
+            legend_label = f"Altura: {sample_height} mm"
+        
+        # Adicionar trace ao gráfico
+        fig.add_trace(
+            go.Scatter(
+                x=df_subset['freq_ghz'],
+                y=df_subset[f'{s_param_type.lower()}_db'],
+                mode='lines',
+                name=legend_label,
+                line=dict(color=line_color, width=2),
+                hovertemplate=(
+                    f"<b>{s_param_type}</b><br>" +
+                    "Freq: %{x:.3f} GHz<br>" +
+                    f"{s_param_type}: %{{y:.2f}} dB<br>" +
+                    f"Altura: {sample_height} mm<br>" +
+                    (f"εr: {permittivity}<br>" if has_permittivity else "") +
+                    "<extra></extra>"
+                )
+            )
+        )
+    
+    # Configurar layout
+    title = f"Comparação de Curvas {s_param_type} por Altura da Amostra"
+    if has_permittivity:
+        title += " e Permissividade"
+    
+    fig.update_layout(
+        title=dict(
+            text=title,
+            x=0.5,
+            xanchor='center',
+            font=dict(size=16)
+        ),
+        xaxis_title="Frequência (GHz)",
+        yaxis_title=f"{s_param_type} (dB)",
+        hovermode='closest',
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02,
+            bgcolor='rgba(255,255,255,0.8)',
+            bordercolor='rgba(0,0,0,0.2)',
+            borderwidth=1
+        ),
+        margin=dict(l=50, r=200, t=50, b=50),
+        height=600,
+        showlegend=True
+    )
+    
+    # Adicionar grid
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+    
+    return fig
