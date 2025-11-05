@@ -1,3 +1,13 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from pathlib import Path
+import io
+import base64
+
 def create_results_visualizer():
     """Cria a interface para visualização e análise de resultados exportados"""
     
@@ -101,6 +111,7 @@ def create_results_visualizer():
     # CONTINUAÇÃO DO CÓDIGO ORIGINAL (a parte existente da visualização)
     st.markdown("---")
     st.markdown("### 🗂️ Gerenciamento de Colunas e Linhas")
+
     
     # Mostrar tabela com opção de remover colunas e filtrar linhas
     filtered_data = display_data_table_with_filters(all_data)
