@@ -119,6 +119,7 @@ def create_results_visualizer():
     
     display_statistics(final_filtered_data, x_axis, y_axis)
 
+# Alternativa 2: Se quiser manter o download, podemos usar esta abordagem
 def create_curves_comparison():
     """Cria a interface para comparação de curvas S11/S21"""
     
@@ -187,10 +188,9 @@ def create_curves_comparison():
         - Gráfico agrupa curvas por **sample_height** (cores diferentes)
         - Cada **permissividade** recebe tons diferentes da mesma cor
         - Ideal para análise visual comparativa
-        - Use o menu de contexto do gráfico para salvar como imagem
         """)
     
-    # Verificar se temos dados suficientes - AGORA COM MAIS FLEXIBILIDADE
+    # Verificar se temos dados suficientes
     has_sample_height = 'sample_height [mm]' in all_data.columns
     has_freq_data = 'freq_ghz' in all_data.columns
     has_s_data = f'{s_param_display.lower()}_db' in all_data.columns
@@ -236,35 +236,31 @@ def create_curves_comparison():
     if comparison_fig:
         st.plotly_chart(comparison_fig, use_container_width=True)
         
-        # Botão para download da imagem
-        col_download, col_stats = st.columns([1, 2])
+        # Estatísticas do gráfico
+        col_stats1, col_stats2 = st.columns(2)
         
-        with col_download:
-            # Converter figura para imagem para download
-            img_bytes = comparison_fig.to_image(format="png", width=1200, height=600, scale=2)
-            st.download_button(
-                label="📥 Baixar Gráfico como PNG",
-                data=img_bytes,
-                file_name=f"comparacao_curvas_{s_param_display}.png",
-                mime="image/png",
-                help="Baixe o gráfico em alta resolução para relatórios"
-            )
-        
-        with col_stats:
-            # Estatísticas do gráfico
+        with col_stats1:
             sample_heights = all_data['sample_height [mm]'].nunique()
             if '$perm2 []' in all_data.columns:
                 perms = all_data['$perm2 []'].nunique()
-                st.info(f"📊 Gráfico contém {sample_heights} alturas diferentes × {perms} permissividades")
+                st.info(f"📊 {sample_heights} alturas × {perms} permissividades")
             else:
-                st.info(f"📊 Gráfico contém {sample_heights} alturas diferentes")
-            
-            # Informações adicionais
+                st.info(f"📊 {sample_heights} alturas diferentes")
+        
+        with col_stats2:
             if '$perm2 []' in all_data.columns:
                 total_curves = len(all_data.groupby(['sample_height [mm]', '$perm2 []']))
             else:
                 total_curves = len(all_data.groupby(['sample_height [mm]', 'arquivo']))
-            st.info(f"📈 Total de {total_curves} curvas plotadas")
+            st.info(f"📈 {total_curves} curvas plotadas")
+        
+        # Instruções para salvar
+        st.info("""
+        **💡 Para salvar o gráfico como imagem:**
+        - Passe o mouse sobre o gráfico
+        - Clique no ícone de câmera 📷 no canto superior direito
+        - Escolha o formato desejado (PNG, SVG, etc.)
+        """)
     
     else:
         st.error("❌ Não foi possível gerar o gráfico de comparação.")
