@@ -30,11 +30,11 @@ def setup_ui():
     if 's_param_type' not in st.session_state:
         st.session_state.s_param_type = "S21"
 
-    # CORREÇÃO: Manter apenas duas abas, pois a funcionalidade de comparação
-    # já está integrada na aba "Visualização de Resultados"
-    tab1, tab2 = st.tabs([
+    # TRÊS ABAS SEPARADAS
+    tab1, tab2, tab3 = st.tabs([
         "📈 Análise de Dados S11/S21", 
-        "📊 Visualização de Resultados"  # Agora inclui a comparação de curvas
+        "📊 Visualização de Resultados",
+        "🔄 Comparação de Curvas"  # NOVA ABA SEPARADA
     ])
     
     with tab1:
@@ -46,6 +46,13 @@ def setup_ui():
             create_results_visualizer()
         except ImportError as e:
             st.error(f"❌ Erro ao carregar o visualizador de resultados: {e}")
+    
+    with tab3:
+        try:
+            from utils.results_visualizer import create_curves_comparison
+            create_curves_comparison()
+        except ImportError as e:
+            st.error(f"❌ Erro ao carregar o comparador de curvas: {e}")
 # ======================
 # Reset de aplicação
 # ======================
