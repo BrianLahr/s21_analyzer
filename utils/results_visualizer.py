@@ -130,18 +130,18 @@ def create_curves_comparison():
     
     # Upload de múltiplos arquivos Excel
     uploaded_files = st.file_uploader(
-        "**Selecione os arquivos Excel para comparação**",
-        type=['xlsx'],
+        "**Selecione os arquivos CSV para comparação**",
+        type=['csv'],
         accept_multiple_files=True,
         key="curves_comparison_uploader"
     )
     
     if not uploaded_files:
-        st.info("👆 Faça upload de um ou mais arquivos Excel para gerar a comparação de curvas")
+        st.info("👆 Faça upload de um ou mais arquivos CSV para gerar a comparação de curvas")
         return
     
     # Processar arquivos carregados
-    all_data = load_and_process_files(uploaded_files)
+    all_data = load_and_process_csv_files(uploaded_files)
     
     if all_data.empty:
         st.error("❌ Nenhum dado válido encontrado nos arquivos carregados.")
@@ -617,6 +617,34 @@ def load_and_process_files(uploaded_files):
             all_data.append(df)
             
         except Exception as e:
+            
+            st.error(f"❌ Erro ao processar {uploaded_file.name}: {e}")
+    
+    # CORREÇÃO: Retornar DataFrame vazio se não houver dados
+    if all_data:
+        return pd.concat(all_data, ignore_index=True)
+    else:
+        return pd.DataFrame()
+    
+def load_and_process_csv_files(uploaded_files):
+    """Carrega e processa múltiplos arquivos Excel"""
+    all_data = []
+    
+    for uploaded_file in uploaded_files:
+        try:
+            # Ler arquivo Excel
+            df = pd.read_csv(uploaded_file)
+            
+            # Adicionar coluna com nome do arquivo
+            df['arquivo'] = uploaded_file.name
+            
+            # Converter colunas numéricas
+            df = convert_numeric_columns(df)
+            
+            all_data.append(df)
+            
+        except Exception as e:
+            
             st.error(f"❌ Erro ao processar {uploaded_file.name}: {e}")
     
     # CORREÇÃO: Retornar DataFrame vazio se não houver dados
