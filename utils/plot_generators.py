@@ -119,11 +119,13 @@ def plot_curves_comparison(df, s_param_type="S21"):
         st.warning("⚠️ Nenhum dado disponível para plotar.")
         return None
     
-    # Verificar colunas necessárias
+    # Verificar colunas necessárias com nomes mapeados
     required_cols = ['freq_ghz', f'{s_param_type.lower()}_db']
     missing_cols = [col for col in required_cols if col not in df.columns]
+    
     if missing_cols:
         st.error(f"❌ Colunas necessárias não encontradas: {missing_cols}")
+        st.info(f"💡 Colunas disponíveis: {list(df.columns)}")
         return None
     
     # Verificar se temos as colunas de agrupamento
@@ -199,7 +201,7 @@ def plot_curves_comparison(df, s_param_type="S21"):
             line_color = palette[len(palette) // 2]
         
         # Criar label da legenda
-        if has_permittivity:
+        if has_permittivity and permittivity != 'N/A':
             legend_label = f"Altura: {sample_height} mm, εr: {permittivity}"
         else:
             legend_label = f"Altura: {sample_height} mm"
@@ -217,7 +219,7 @@ def plot_curves_comparison(df, s_param_type="S21"):
                     "Freq: %{x:.3f} GHz<br>" +
                     f"{s_param_type}: %{{y:.2f}} dB<br>" +
                     f"Altura: {sample_height} mm<br>" +
-                    (f"εr: {permittivity}<br>" if has_permittivity else "") +
+                    (f"εr: {permittivity}<br>" if has_permittivity and permittivity != 'N/A' else "") +
                     "<extra></extra>"
                 )
             )

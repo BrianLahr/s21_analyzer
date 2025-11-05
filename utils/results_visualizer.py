@@ -124,11 +124,11 @@ def create_curves_comparison():
     
     st.markdown("## 🔄 Comparação de Curvas S11/S21")
     st.markdown("""
-    Faça upload de arquivos Excel exportados (.xlsx) para gerar gráficos comparativos 
+    Faça upload de arquivos CSV para gerar gráficos comparativos 
     das curvas S11/S21 agrupadas por altura da amostra e permissividade.
     """)
     
-    # Upload de múltiplos arquivos Excel
+    # Upload de múltiplos arquivos CSV
     uploaded_files = st.file_uploader(
         "**Selecione os arquivos CSV para comparação**",
         type=['csv'],
@@ -160,6 +160,19 @@ def create_curves_comparison():
             s_param_type = "S11"
         elif 's21_db' in all_data.columns:
             s_param_type = "S21"
+        else:
+            # Tentar detectar baseado em padrões de nome
+            s21_cols = [col for col in all_data.columns if any(x in col.lower() for x in ['s21', 's(2,1)', 'insertion'])]
+            s11_cols = [col for col in all_data.columns if any(x in col.lower() for x in ['s11', 's(1,1)', 'reflection', 'return'])]
+            
+            if s21_cols:
+                st.info(f"🔍 Detectada coluna S21: {s21_cols[0]}")
+                all_data = all_data.rename(columns={s21_cols[0]: 's21_db'})
+                s_param_type = "S21"
+            elif s11_cols:
+                st.info(f"🔍 Detectada coluna S11: {s11_cols[0]}")
+                all_data = all_data.rename(columns={s11_cols[0]: 's11_db'})
+                s_param_type = "S11"
         
         s_param_display = st.selectbox(
             "Tipo de Parâmetro S para Plotar:",
@@ -177,7 +190,7 @@ def create_curves_comparison():
         - Use o menu de contexto do gráfico para salvar como imagem
         """)
     
-    # Verificar se temos dados suficientes
+    # Verificar se temos dados suficientes - AGORA COM MAIS FLEXIBILIDADE
     has_sample_height = 'sample_height [mm]' in all_data.columns
     has_freq_data = 'freq_ghz' in all_data.columns
     has_s_data = f'{s_param_display.lower()}_db' in all_data.columns
@@ -191,6 +204,18 @@ def create_curves_comparison():
         # Mostrar colunas disponíveis para debug
         with st.expander("🔍 Colunas disponíveis nos dados"):
             st.write("**Colunas encontradas:**", list(all_data.columns))
+            
+            # Tentar detectar automaticamente colunas similares
+            freq_cols = [col for col in all_data.columns if any(x in col.lower() for x in ['freq', 'frequency'])]
+            height_cols = [col for col in all_data.columns if any(x in col.lower() for x in ['height', 'sample', 'espessura', 'thickness'])]
+            s_cols = [col for col in all_data.columns if any(x in col.lower() for x in ['s21', 's11', 'db(s', 's(2,1)', 's(1,1)'])]
+            
+            if freq_cols:
+                st.info(f"💡 Possíveis colunas de frequência: {freq_cols}")
+            if height_cols:
+                st.info(f"💡 Possíveis colunas de altura: {height_cols}")
+            if s_cols:
+                st.info(f"💡 Possíveis colunas S-parameters: {s_cols}")
             
             # Estatísticas básicas dos dados
             if not all_data.empty:
@@ -235,7 +260,10 @@ def create_curves_comparison():
                 st.info(f"📊 Gráfico contém {sample_heights} alturas diferentes")
             
             # Informações adicionais
-            total_curves = len(all_data.groupby(['sample_height [mm]', '$perm2 []' if '$perm2 []' in all_data.columns else 'arquivo']))
+            if '$perm2 []' in all_data.columns:
+                total_curves = len(all_data.groupby(['sample_height [mm]', '$perm2 []']))
+            else:
+                total_curves = len(all_data.groupby(['sample_height [mm]', 'arquivo']))
             st.info(f"📈 Total de {total_curves} curvas plotadas")
     
     else:
@@ -627,16 +655,19 @@ def load_and_process_files(uploaded_files):
         return pd.DataFrame()
     
 def load_and_process_csv_files(uploaded_files):
-    """Carrega e processa múltiplos arquivos Excel"""
+    """Carrega e processa múltiplos arquivos CSV com mapeamento automático de colunas"""
     all_data = []
     
     for uploaded_file in uploaded_files:
         try:
-            # Ler arquivo Excel
+            # Ler arquivo CSV
             df = pd.read_csv(uploaded_file)
             
             # Adicionar coluna com nome do arquivo
             df['arquivo'] = uploaded_file.name
+            
+            # MAPEAMENTO AUTOMÁTICO DE COLUNAS
+            df = map_column_names(df)
             
             # Converter colunas numéricas
             df = convert_numeric_columns(df)
@@ -644,7 +675,6 @@ def load_and_process_csv_files(uploaded_files):
             all_data.append(df)
             
         except Exception as e:
-            
             st.error(f"❌ Erro ao processar {uploaded_file.name}: {e}")
     
     # CORREÇÃO: Retornar DataFrame vazio se não houver dados
@@ -652,6 +682,55 @@ def load_and_process_csv_files(uploaded_files):
         return pd.concat(all_data, ignore_index=True)
     else:
         return pd.DataFrame()
+
+def map_column_names(df):
+    """Mapeia automaticamente nomes de colunas para os nomes esperados pelo sistema"""
+    
+    column_mappings = {
+        # Frequência
+        'Freq [GHz]': 'freq_ghz',
+        'Frequency': 'freq_ghz',
+        'Freq': 'freq_ghz',
+        'freq': 'freq_ghz',
+        
+        # S21
+        'dB(S(2,1)) []': 's21_db',
+        'S21': 's21_db',
+        'S(2,1)': 's21_db',
+        'dB(S21)': 's21_db',
+        
+        # S11  
+        'dB(S(1,1)) []': 's11_db',
+        'S11': 's11_db',
+        'S(1,1)': 's11_db',
+        'dB(S11)': 's11_db',
+        
+        # Altura da amostra
+        'sample_height [mm]': 'sample_height [mm]',  # Já está correto
+        'sample_height': 'sample_height [mm]',
+        'height': 'sample_height [mm]',
+        'espessura': 'sample_height [mm]',
+        
+        # Permissividade
+        '$perm2 []': '$perm2 []',  # Já está correto
+        'perm2': '$perm2 []',
+        'permissividade': '$perm2 []',
+        'permittivity': '$perm2 []'
+    }
+    
+    # Aplicar mapeamento
+    df_renamed = df.rename(columns=column_mappings)
+    
+    # Log de mapeamento aplicado (para debug)
+    renamed_cols = []
+    for old_col, new_col in column_mappings.items():
+        if old_col in df.columns and old_col != new_col:
+            renamed_cols.append(f"{old_col} → {new_col}")
+    
+    if renamed_cols:
+        st.info(f"🔧 Colunas renomeadas automaticamente: {', '.join(renamed_cols)}")
+    
+    return df_renamed
 
 def convert_numeric_columns(df):
     """Converte colunas para numérico quando possível"""
