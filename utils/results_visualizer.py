@@ -41,11 +41,11 @@ def create_results_visualizer():
     st.markdown("---")
     st.markdown("## 📈 Gráfico de Comparação de Curvas S11/S21")
     
-    # Detectar automaticamente o tipo S (S11 ou S21)
+    # CORREÇÃO: Detectar automaticamente o tipo S (S11 ou S21) baseado nas colunas disponíveis
     s_param_type = "S21"  # Padrão
-    if 's11_ressonancia_db' in all_data.columns:
+    if 's11_db' in all_data.columns:
         s_param_type = "S11"
-    elif 's21_ressonancia_db' in all_data.columns:
+    elif 's21_db' in all_data.columns:
         s_param_type = "S21"
     
     col_type, col_info = st.columns([1, 3])
@@ -75,6 +75,7 @@ def create_results_visualizer():
         st.warning(f"""
         ⚠️ Dados insuficientes para gerar gráfico de comparação.
         Necessárias colunas: 'sample_height [mm]', 'freq_ghz', '{s_param_display.lower()}_db'
+        Colunas disponíveis: {list(all_data.columns)}
         """)
     else:
         # Gerar gráfico de comparação
