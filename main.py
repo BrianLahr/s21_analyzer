@@ -30,11 +30,12 @@ def setup_ui():
     if 's_param_type' not in st.session_state:
         st.session_state.s_param_type = "S21"
 
-    # TRÊS ABAS SEPARADAS
-    tab1, tab2, tab3 = st.tabs([
+    # QUATRO ABAS SEPARADAS
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📈 Análise de Dados S11/S21", 
         "📊 Visualização de Resultados",
-        "🔄 Comparação de Curvas"  # NOVA ABA SEPARADA
+        "🔄 Comparação de Curvas",
+        "🗂️ Organizador de Resultados"  # NOVA ABA
     ])
     
     with tab1:
@@ -53,6 +54,13 @@ def setup_ui():
             create_curves_comparison()
         except ImportError as e:
             st.error(f"❌ Erro ao carregar o comparador de curvas: {e}")
+    
+    with tab4:
+        try:
+            from utils.results_organizer import create_results_organizer
+            create_results_organizer()
+        except ImportError as e:
+            st.error(f"❌ Erro ao carregar o organizador de resultados: {e}")
 # ======================
 # Reset de aplicação
 # ======================
