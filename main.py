@@ -8,6 +8,62 @@ import zipfile
 from utils.file_handlers import handle_file_upload, display_file_preview
 from utils.data_processors import identify_columns, process_data
 
+# ------------- UI para Circuito Equivalente ---------------
+import io
+import matplotlib.pyplot as plt
+
+def create_equiv_circuit_ui(equiv_module):
+    st.header("⚙️ Circuito Equivalente — Extração RLC")
+    st.write("Faça upload de um CSV com colunas geométricas + `Freq [GHz]` + `dB(S(1,1)) []` + `dB(S(2,1)) []`.")
+    uploaded = st.file_uploader("Carregue CSV para extração de circuito equivalente", type=['csv'], key="equiv_uploader")
+    if not uploaded:
+        st.info("Faça upload de um CSV para começar.")
+        return
+
+    try:
+        df = pd.read_csv(uploaded)
+    except Exception as e:
+        st.error(f"Erro ao ler CSV: {e}")
+        return
+
+    st.write("Preview dos dados:")
+    st.dataframe(df.head())
+
+    if st.button("🔎 Analisar e extrair circuito equivalente"):
+        with st.spinner("Analisando..."):
+            try:
+                results_df, series = equiv_module.analyze_equiv_circuits_from_df(df)
+                st.success("Extração concluída!")
+            except Exception as e:
+                st.error(f"Erro durante a análise: {e}")
+                return
+
+        st.subheader("Tabela de parâmetros extraídos")
+        st.dataframe(results_df)
+
+        # download excel
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            results_df.to_excel(writer, index=False, sheet_name='equiv_results')
+        buf.seek(0)
+        st.download_button("📥 Baixar resultados (.xlsx)", buf, file_name="equiv_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        # plot comparativo para o primeiro caso (exemplo)
+        st.subheader("Comparativo Medido vs Modelo (exemplo do primeiro caso)")
+        first_key = list(series.keys())[0]
+        sr = series[first_key]
+        fig, ax = plt.subplots(figsize=(8,4))
+        equiv_module.plot_comparison_single_case(sr, title=first_key, ax=ax)
+        st.pyplot(fig)
+
+        # mostrar correlações geom -> L/C
+        st.subheader("Correlação geométrica → L/C (Pearson)")
+        corr = equiv_module.geom_to_LC_correlations(results_df)
+        st.json(corr)
+
+        st.info("Observação: L e C foram extraídos analiticamente; R foi estimado por ajuste mantendo L/C fixos. Se quiser melhorar ajuste geral, podemos adicionar ajuste simultâneo ou modelo Pi-type.")
+
+
 def setup_ui():
     """Configuração inicial de layout"""
     st.set_page_config(
@@ -30,12 +86,13 @@ def setup_ui():
     if 's_param_type' not in st.session_state:
         st.session_state.s_param_type = "S21"
 
-    # QUATRO ABAS SEPARADAS
-    tab1, tab2, tab3, tab4 = st.tabs([
+        # CINCO ABAS (adicionada: Circuito Equivalente)
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 Análise de Dados S11/S21", 
         "📊 Visualização de Resultados",
         "🔄 Comparação de Curvas",
-        "🗂️ Organizador de Resultados"  # NOVA ABA
+        "🗂️ Organizador de Resultados",
+        "⚙️ Circuito Equivalente"
     ])
     
     with tab1:
@@ -61,6 +118,14 @@ def setup_ui():
             create_results_organizer()
         except ImportError as e:
             st.error(f"❌ Erro ao carregar o organizador de resultados: {e}")
+
+    with tab5:
+        try:
+            from utils import equiv_circuit
+            create_equiv_circuit_ui(equiv_circuit)
+        except Exception as e:
+            st.error(f"❌ Erro ao carregar o módulo de circuito equivalente: {e}")
+
 # ======================
 # Reset de aplicação
 # ======================
@@ -252,6 +317,8 @@ def run_analysis_tab():
         st.session_state.export_ready = False
         if st.button("🔄 Resetar Aplicação"):
             reset_app()
+
+            
 
 if __name__ == "__main__":
     main()
