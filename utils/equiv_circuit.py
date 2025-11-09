@@ -4,7 +4,6 @@ import pandas as pd
 import math
 from scipy import signal
 from scipy.optimize import least_squares
-import matplotlib.pyplot as plt
 
 Z0 = 50.0
 
