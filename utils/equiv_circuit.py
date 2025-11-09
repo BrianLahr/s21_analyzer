@@ -680,6 +680,14 @@ def create_circuit_analysis_interface():
         st.dataframe(results_df.drop(columns=[c for c in results_df.columns if 'pi_' in str(c) or 'Req_' in str(c) or 'Leq_' in str(c) or 'Ceq_' in str(c) or 'Rp_' in str(c) or 'Cp_' in str(c)], errors='ignore'))
         
         st.markdown("### Resultados do Modelo Pi (Seção 2.3.1)")
+        # Definir colunas geométricas padrão se não especificadas
+        if geom_cols is None:
+            geom_cols = ['g [mm]', 'outer_ring_radius [mm]', 'outer_ring_width [mm]', 'split_width [mm]']
+        
+        # Filtrar apenas colunas geométricas que existem no DataFrame
+        available_geom_cols = [col for col in geom_cols if col in df.columns]
+        if not available_geom_cols:
+            raise ValueError("Nenhuma coluna geométrica encontrada no DataFrame")
         pi_cols = available_geom_cols + [c for c in results_df.columns if 'pi_' in str(c) or 'Req_' in str(c) or 'Leq_' in str(c) or 'Ceq_' in str(c) or 'Rp_' in str(c) or 'Cp_' in str(c)]
         st.dataframe(results_df[pi_cols])
         
