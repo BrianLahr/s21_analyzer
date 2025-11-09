@@ -11,7 +11,7 @@ def create_results_organizer():
     st.markdown("## 🗂️ Organizador de Resultados")
     st.markdown("""
     Faça upload de múltiplos arquivos Excel de resultados para:
-    - **Organizar** os dados por altura da amostra, ressonância e permissividade
+    - **Organizar** os dados por altura/deslocamento da amostra, ressonância e permissividade
     - **Adicionar** novas colunas: variação de amplitude e Figura de Mérito (FoM)
     - **Exportar** todos os arquivos organizados em um ZIP
     """)
@@ -37,7 +37,7 @@ def create_results_organizer():
     with col1:
         st.info("""
         **📋 Ordem de organização:**
-        1. Altura da amostra (crescente)
+        1. Altura/Deslocamento da amostra (crescente)
         2. Número da ressonância (crescente)  
         3. Permissividade (crescente)
         """)
@@ -115,12 +115,29 @@ def detect_s_param_type(filename):
         # Tentar detectar baseado nas colunas
         return "S21"  # Padrão
 
+def detect_height_column(df):
+    """Detecta qual coluna de altura/deslocamento está presente no DataFrame"""
+    if 'sample_height [mm]' in df.columns:
+        return 'sample_height [mm]'
+    elif 'displacement [mm]' in df.columns:
+        return 'displacement [mm]'
+    else:
+        # Tentar encontrar qualquer coluna que contenha 'height' ou 'displacement'
+        for col in df.columns:
+            col_lower = col.lower()
+            if 'height' in col_lower or 'displacement' in col_lower:
+                return col
+        return None
+
 def organize_dataframe(df, s_param_type):
     """Organiza o DataFrame na ordem especificada"""
     
+    # Detectar coluna de altura/deslocamento
+    height_col = detect_height_column(df)
+    
     # Verificar colunas necessárias
-    required_cols = ['sample_height [mm]', 'ressonancia_num', '$perm2 []']
-    missing_cols = [col for col in required_cols if col not in df.columns]
+    required_cols = [height_col, 'ressonancia_num', '$perm2 []']
+    missing_cols = [col for col in required_cols if col is None or col not in df.columns]
     
     if missing_cols:
         st.warning(f"⚠️ Colunas ausentes para organização: {missing_cols}")
@@ -128,7 +145,7 @@ def organize_dataframe(df, s_param_type):
     
     # Ordenar dados
     df_sorted = df.sort_values([
-        'sample_height [mm]', 
+        height_col, 
         'ressonancia_num', 
         '$perm2 []'
     ]).reset_index(drop=True)
@@ -149,7 +166,7 @@ def add_new_columns(df, s_param_type):
     return df_enriched
 
 def calculate_amplitude_variation(df, s_param_type):
-    """Calcula a variação de amplitude entre permissividades para mesma ressonância e altura"""
+    """Calcula a variação de amplitude entre permissividades para mesma ressonância e altura/deslocamento"""
     
     # Coluna de amplitude baseada no tipo S
     amplitude_col = f'{s_param_type.lower()}_ressonancia_db'
@@ -159,11 +176,18 @@ def calculate_amplitude_variation(df, s_param_type):
         df['var_amplit'] = np.nan
         return df
     
+    # Detectar coluna de altura/deslocamento
+    height_col = detect_height_column(df)
+    if height_col is None:
+        st.warning("⚠️ Nenhuma coluna de altura/deslocamento encontrada para calcular var_amplit")
+        df['var_amplit'] = np.nan
+        return df
+    
     # Inicializar coluna
     df['var_amplit'] = np.nan
     
-    # Agrupar por altura da amostra e número da ressonância
-    grouped = df.groupby(['sample_height [mm]', 'ressonancia_num'])
+    # Agrupar por altura/deslocamento da amostra e número da ressonância
+    grouped = df.groupby([height_col, 'ressonancia_num'])
     
     for (height, ressonance), group in grouped:
         if len(group) >= 2:
@@ -260,6 +284,11 @@ def display_processing_stats(processed_files):
             st.write(f"**{filename}**")
             st.write(f"- Linhas: {len(df)}")
             st.write(f"- Colunas: {len(df.columns)}")
+            
+            # Detectar qual coluna de altura está sendo usada
+            height_col = detect_height_column(df)
+            if height_col:
+                st.write(f"- Coluna de altura: {height_col}")
             
             # Verificar se as novas colunas foram adicionadas
             new_cols = ['var_amplit', 'FoM']
