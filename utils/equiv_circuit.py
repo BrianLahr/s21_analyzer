@@ -142,10 +142,7 @@ def fit_R_only(freq_ghz, s21_db_meas, L_nH, C_pF, r0=1e3):
 # Pipeline: agrupar e extrair
 # ---------------------------
 def analyze_equiv_circuits_from_df(df,
-                                   geom_cols=('g [mm]',
-                                              'outer_ring_radius [mm]',
-                                              'outer_ring_width [mm]',
-                                              'split_width [mm]'),
+                                   geom_cols=None,
                                    freq_col='Freq [GHz]',
                                    s11_col='dB(S(1,1)) []',
                                    s21_col='dB(S(2,1)) []'):
@@ -153,8 +150,19 @@ def analyze_equiv_circuits_from_df(df,
     df: pandas DataFrame com colunas geom_cols + freq_col + s11_col + s21_col
     Retorna: resultados_df, per-group time series dict
     """
-    # sanity check
-    for c in list(geom_cols) + [freq_col, s11_col, s21_col]:
+    # Definir colunas geométricas padrão se não especificadas
+    if geom_cols is None:
+        geom_cols = ['g [mm]', 'outer_ring_radius [mm]', 'outer_ring_width [mm]', 'split_width [mm]']
+    
+    # Filtrar apenas colunas geométricas que existem no DataFrame
+    available_geom_cols = [col for col in geom_cols if col in df.columns]
+    
+    if not available_geom_cols:
+        raise ValueError("Nenhuma coluna geométrica encontrada no DataFrame")
+    
+    # sanity check para colunas obrigatórias
+    required_cols = [freq_col, s11_col, s21_col]
+    for c in required_cols:
         if c not in df.columns:
             raise ValueError(f"Coluna esperada não encontrada: {c}")
 
@@ -164,11 +172,15 @@ def analyze_equiv_circuits_from_df(df,
     df2[s11_col] = pd.to_numeric(df2[s11_col], errors='coerce')
     df2[s21_col] = pd.to_numeric(df2[s21_col], errors='coerce')
 
-    group_keys = list(geom_cols)
+    # Remover linhas com valores NaN nas colunas críticas
+    df2 = df2.dropna(subset=[freq_col, s21_col])
+
+    group_keys = available_geom_cols
     grouped = df2.groupby(group_keys)
 
     results = []
     series_store = {}  # para plotar por caso
+    
     for gvals, gdf in grouped:
         gdf_sorted = gdf.sort_values(freq_col)
         freq = gdf_sorted[freq_col].values
@@ -180,6 +192,7 @@ def analyze_equiv_circuits_from_df(df,
         L_nH, C_pF = (None, None)
         if f0 is not None and fc is not None:
             L_nH, C_pF = compute_LC_from_fc_f0(fc, f0)
+        
         # ajustar R (apenas R) para melhorar ajuste com L,C (se obtidos)
         R_est = None
         fit_success = False
@@ -189,11 +202,12 @@ def analyze_equiv_circuits_from_df(df,
                 fit_success = res.success if hasattr(res, 'success') else True
             except Exception:
                 R_est = None
+                fit_success = False
+        
         # Simula com esses parâmetros (se tiver L,C)
         s21_model_db = None
-        if L_nH is not None and C_pF is not None:
-            R_for_sim = R_est if R_est is not None else 1e6
-            s21_model_db = s21_db_from_RLC(freq, R_for_sim, L_nH, C_pF)
+        if L_nH is not None and C_pF is not None and R_est is not None:
+            s21_model_db = s21_db_from_RLC(freq, R_est, L_nH, C_pF)
 
         # montar output
         row = dict(zip(group_keys, gvals if isinstance(gvals, tuple) else (gvals,)))
@@ -207,45 +221,73 @@ def analyze_equiv_circuits_from_df(df,
             'n_points': len(freq)
         })
         results.append(row)
-        series_store[str(gvals)] = {
+        
+        # Usar string identificadora única para o grupo
+        group_id = str(gvals) if isinstance(gvals, tuple) else f"({gvals})"
+        series_store[group_id] = {
             'freq': freq,
             's21_db': s21_db,
             's21_smooth': s_smooth,
             's21_model_db': s21_model_db,
-            's11_db': s11_db
+            's11_db': s11_db,
+            'group_values': gvals,
+            'params': {
+                'L_nH': L_nH,
+                'C_pF': C_pF,
+                'R_ohm': R_est,
+                'f0': f0,
+                'fc': fc
+            }
         }
 
     results_df = pd.DataFrame(results)
-    # ordena por f0 (se presente)
-    if 'f0 [GHz]' in results_df.columns:
-        results_df = results_df.sort_values('f0 [GHz]')
-    return results_df.reset_index(drop=True), series_store
+    
+    # Calcular correlações automaticamente
+    correlations = {}
+    if not results_df.empty:
+        correlations = geom_to_LC_correlations(results_df, available_geom_cols)
+    
+    return results_df.reset_index(drop=True), series_store, correlations
 
 # ---------------------------
 # Correlação simples entre geométricos e L/C
 # ---------------------------
-def geom_to_LC_correlations(results_df, geom_cols=('g [mm]',
-                                                  'outer_ring_radius [mm]',
-                                                  'outer_ring_width [mm]',
-                                                  'split_width [mm]')):
+def geom_to_LC_correlations(results_df, geom_cols):
     """
     Computa correlação Pearson entre cada geom_col e L_nH / C_pF.
-    Retorna dict de {col: {'r_L':..., 'p_L':..., 'r_C':..., 'p_C':...}} (p via np.corrcoef aproximação).
+    Retorna dict de {col: {'r_L':..., 'p_L':..., 'r_C':..., 'p_C':...}}
     """
     corr = {}
     for col in geom_cols:
         if col not in results_df.columns:
             continue
+        
         x = pd.to_numeric(results_df[col], errors='coerce')
         L = pd.to_numeric(results_df['L_nH'], errors='coerce')
         C = pd.to_numeric(results_df['C_pF'], errors='coerce')
-        mask = x.notna() & L.notna()
-        if mask.sum() < 3:
-            corr[col] = {'r_L': None, 'r_C': None}
-            continue
-        rL = np.corrcoef(x[mask], L[mask])[0,1]
-        rC = np.corrcoef(x[mask], C[mask])[0,1]
-        corr[col] = {'r_L': float(rL), 'r_C': float(rC)}
+        
+        # Correlação com L
+        mask_L = x.notna() & L.notna()
+        if mask_L.sum() >= 2:
+            try:
+                rL = np.corrcoef(x[mask_L], L[mask_L])[0,1]
+            except:
+                rL = None
+        else:
+            rL = None
+            
+        # Correlação com C
+        mask_C = x.notna() & C.notna()
+        if mask_C.sum() >= 2:
+            try:
+                rC = np.corrcoef(x[mask_C], C[mask_C])[0,1]
+            except:
+                rC = None
+        else:
+            rC = None
+            
+        corr[col] = {'r_L': rL, 'r_C': rC}
+    
     return corr
 
 # ---------------------------
@@ -258,15 +300,64 @@ def get_comparison_data(series):
         "s21_db": series["s21_db"],
         "s21_smooth": series["s21_smooth"],
         "s21_model_db": series.get("s21_model_db", None),
+        "s11_db": series.get("s11_db", None),
     }
-
 
 # ---------------------------
 # Utility: export results to excel
 # ---------------------------
 def export_results_df_to_excel(results_df, path):
+    """Exporta resultados para Excel"""
     results_df.to_excel(path, index=False)
 
 # ---------------------------
-# End of file
+# Função principal para integração com Streamlit
 # ---------------------------
+def create_circuit_analysis_interface():
+    """Cria interface para análise de circuito equivalente no Streamlit"""
+    import streamlit as st
+    
+    st.markdown("## 🔌 Análise de Circuito Equivalente")
+    st.markdown("""
+    Extrai automaticamente parâmetros RLC do circuito equivalente a partir dos dados S21.
+    - **Identifica** f0 (frequência de ressonância) e fc (frequência de corte -3dB)
+    - **Calcula** L e C analiticamente a partir de f0 e fc
+    - **Ajusta** R para melhor correspondência com os dados medidos
+    - **Mostra** correlações entre parâmetros geométricos e L/C
+    """)
+    
+    # Upload de arquivo
+    uploaded_file = st.file_uploader(
+        "**Selecione o arquivo Excel com dados de simulação**",
+        type=['xlsx'],
+        key="circuit_analysis_uploader"
+    )
+    
+    if not uploaded_file:
+        st.info("👆 Faça upload de um arquivo Excel para analisar o circuito equivalente")
+        return None, None, None
+    
+    try:
+        # Ler arquivo
+        df = pd.read_excel(uploaded_file)
+        
+        # Detectar colunas geométricas automaticamente
+        geometric_cols = [col for col in df.columns if any(x in col.lower() for x in 
+                         ['g [mm]', 'radius', 'width', 'height', 'displacement', 'split'])]
+        
+        if not geometric_cols:
+            st.warning("⚠️ Não foram encontradas colunas geométricas típicas no arquivo")
+            geometric_cols = [col for col in df.columns if col not in 
+                            ['Freq [GHz]', 'dB(S(1,1)) []', 'dB(S(2,1)) []', 'Freq', 'S11', 'S21']][:4]
+        
+        # Processar automaticamente (sem botão)
+        with st.spinner("Analisando circuito equivalente..."):
+            results_df, series_store, correlations = analyze_equiv_circuits_from_df(
+                df, geom_cols=geometric_cols
+            )
+        
+        return results_df, series_store, correlations
+        
+    except Exception as e:
+        st.error(f"❌ Erro na análise do circuito equivalente: {str(e)}")
+        return None, None, None
