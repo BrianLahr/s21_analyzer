@@ -8,9 +8,12 @@ import zipfile
 from utils.file_handlers import handle_file_upload, display_file_preview
 from utils.data_processors import identify_columns, process_data
 
-# ------------- UI para Circuito Equivalente (versão com Plotly) ---------------
+# ------------- UI para Circuito Equivalente (Plotly + correlações interativas) ---------------
 import io
 import plotly.graph_objects as go
+import plotly.express as px
+import pandas as pd
+import streamlit as st
 
 def create_equiv_circuit_ui(equiv_module):
     st.header("⚙️ Circuito Equivalente — Extração RLC")
@@ -63,39 +66,33 @@ def create_equiv_circuit_ui(equiv_module):
             use_container_width=True
         )
 
-        # ===== Plot interativo =====
+        # ===== Plot comparativo =====
         st.subheader("📈 Comparativo Medido vs Modelo (exemplo do primeiro caso)")
         first_key = list(series.keys())[0]
         sr = series[first_key]
-        freq = sr["freq"]
-        s21_db = sr["s21_db"]
-        s21_smooth = sr["s21_smooth"]
-        s21_model = sr["s21_model_db"]
+        data = equiv_module.get_comparison_data(sr)
+        freq = data["freq"]
 
         fig = go.Figure()
-
         fig.add_trace(go.Scatter(
-            x=freq, y=s21_db,
+            x=freq, y=data["s21_db"],
             mode="markers",
             marker=dict(size=4, color="gray", opacity=0.6),
             name="S21 medido (dB)"
         ))
-
         fig.add_trace(go.Scatter(
-            x=freq, y=s21_smooth,
+            x=freq, y=data["s21_smooth"],
             mode="lines",
             line=dict(color="blue", width=2),
             name="S21 suavizado"
         ))
-
-        if s21_model is not None:
+        if data["s21_model_db"] is not None:
             fig.add_trace(go.Scatter(
-                x=freq, y=s21_model,
+                x=freq, y=data["s21_model_db"],
                 mode="lines",
                 line=dict(color="red", width=2, dash="dash"),
                 name="S21 modelo (R||L||C)"
             ))
-
         fig.update_layout(
             xaxis_title="Frequência [GHz]",
             yaxis_title="S21 [dB]",
@@ -104,7 +101,6 @@ def create_equiv_circuit_ui(equiv_module):
             template="plotly_white",
             height=450
         )
-
         st.plotly_chart(fig, use_container_width=True)
 
         # ===== Correlações geométricas =====
@@ -112,10 +108,48 @@ def create_equiv_circuit_ui(equiv_module):
         corr = equiv_module.geom_to_LC_correlations(results_df)
         st.json(corr)
 
+        # ===== Visualização interativa das correlações =====
+        st.subheader("🔍 Visualização das correlações geométricas")
+        geom_cols = [c for c in results_df.columns if "[mm]" in c]
+
+        if geom_cols:
+            param_sel = st.selectbox("Selecione o parâmetro geométrico", geom_cols)
+            fig2 = go.Figure()
+
+            # Scatter para L_nH
+            fig2.add_trace(go.Scatter(
+                x=results_df[param_sel],
+                y=results_df["L_nH"],
+                mode="markers",
+                name="L_nH",
+                marker=dict(color="blue", size=8, symbol="circle"),
+            ))
+            # Scatter para C_pF
+            fig2.add_trace(go.Scatter(
+                x=results_df[param_sel],
+                y=results_df["C_pF"],
+                mode="markers",
+                name="C_pF",
+                marker=dict(color="red", size=8, symbol="diamond"),
+            ))
+
+            fig2.update_layout(
+                title=f"Correlação de {param_sel} com L e C",
+                xaxis_title=f"{param_sel}",
+                yaxis_title="Valor extraído",
+                legend=dict(bgcolor="rgba(255,255,255,0.6)"),
+                template="plotly_white",
+                height=450
+            )
+
+            st.plotly_chart(fig2, use_container_width=True)
+        else:
+            st.warning("Nenhuma coluna geométrica detectada para correlação.")
+
         st.info(
             "Observação: L e C foram extraídos analiticamente; "
-            "R foi estimado por ajuste mantendo L/C fixos. "
-            "Para ajuste mais preciso ou modelo Pi-type, é possível estender o módulo."
+            "R foi ajustado mantendo L/C fixos. "
+            "Para maior precisão ou modelo Pi-type, podemos estender o módulo."
         )
 
 

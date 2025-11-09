@@ -250,29 +250,17 @@ def geom_to_LC_correlations(results_df, geom_cols=('g [mm]',
     return corr
 
 # ---------------------------
-# Plot helpers
+# Plot helpers (compatível com Plotly)
 # ---------------------------
-def plot_comparison_single_case(series, title=None, ax=None):
-    freq = series['freq']
-    s21 = series['s21_db']
-    s21_smooth = series['s21_smooth']
-    s21_model = series['s21_model_db']
+def get_comparison_data(series):
+    """Retorna dicionário pronto para plotar no Plotly"""
+    return {
+        "freq": series["freq"],
+        "s21_db": series["s21_db"],
+        "s21_smooth": series["s21_smooth"],
+        "s21_model_db": series.get("s21_model_db", None),
+    }
 
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(7,4))
-    else:
-        fig = None
-    ax.plot(freq, s21, '.', alpha=0.4, label='S21 medido (dB)')
-    ax.plot(freq, s21_smooth, '-', linewidth=1.0, label='S21 suavizado')
-    if s21_model is not None:
-        ax.plot(freq, s21_model, '-', linewidth=1.5, label='S21 modelo (R||L||C)')
-    ax.set_xlabel('Freq [GHz]')
-    ax.set_ylabel('S21 [dB]')
-    ax.grid(True)
-    ax.legend()
-    if title:
-        ax.set_title(title)
-    return fig, ax
 
 # ---------------------------
 # Utility: export results to excel
