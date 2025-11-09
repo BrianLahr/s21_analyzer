@@ -613,7 +613,7 @@ def export_results_df_to_excel(results_df, path):
 # ---------------------------
 # Streamlit UI (Seu código, sem alterações)
 # ---------------------------
-def create_circuit_analysis_interface():
+def create_circuit_analysis_interface(geom_cols=None):
     """Cria interface para análise de circuito equivalente no Streamlit"""
     import streamlit as st
     
