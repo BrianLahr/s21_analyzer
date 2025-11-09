@@ -341,7 +341,7 @@ def create_circuit_analysis_interface():
     # Upload de arquivo
     uploaded_file = st.file_uploader(
         "**Selecione o arquivo Excel com dados de simulação**",
-        type=['xlsx'],
+        type=['csv'],
         key="circuit_analysis_uploader"
     )
     
@@ -351,7 +351,7 @@ def create_circuit_analysis_interface():
     
     try:
         # Ler arquivo
-        df = pd.read_excel(uploaded_file)
+        df = pd.read_csv(uploaded_file)
         
         # Detectar colunas geométricas automaticamente
         geometric_cols = [col for col in df.columns if any(x in col.lower() for x in 
