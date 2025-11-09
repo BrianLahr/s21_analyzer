@@ -103,19 +103,29 @@ def abcd_to_s21(ABCD, Z0=50.0):
     return S21
 
 def s21_db_from_RLC(freq_ghz, R_ohm, L_nH, C_pF, Z0=50.0):
-    """Calcula S21[dB] para a rede: series(Z0/2) - shunt(R||L||C) - series(Z0/2)."""
+    """Calcula S21[dB] para a rede R||L||C em shunt."""
     freq_ghz = np.asarray(freq_ghz)
-    Zs = Z0 / 2.0
     Y = Y_RLC(freq_ghz, R_ohm, L_nH, C_pF)  # complex array
-    # ABCD matrices
-    M1 = abcd_series(Zs)
-    Ms = abcd_series(Zs)
-    # shunt returns arrays
-    Msh = abcd_shunt(Y)
-    # multiply: M_total = M1 * Msh * M1
-    Mtmp = abcd_multiply(M1[..., None] if M1.ndim==2 else M1, Msh)
-    Mtot = abcd_multiply(Mtmp, Ms[..., None] if Ms.ndim==2 else Ms)
-    # Mtot shape: 2x2xN
+
+    # --- CORREÇÃO ---
+    # O modelo do PDF (Fig 2.6 e 2.11) é APENAS um shunt.
+    # Não há elementos em série Z0/2.
+    # A matriz ABCD total é simplesmente a matriz do shunt.
+    
+    # Mtot = abcd_shunt(Y)  
+    # abcd_shunt retorna (2,2,N) se Y for um array
+    Mtot = abcd_shunt(Y)
+    
+    # --- Fim da Correção ---
+
+    # O código original era:
+    # Zs = Z0 / 2.0
+    # M1 = abcd_series(Zs)
+    # Ms = abcd_series(Zs)
+    # Msh = abcd_shunt(Y)
+    # Mtmp = abcd_multiply(M1[..., None] if M1.ndim==2 else M1, Msh)
+    # Mtot = abcd_multiply(Mtmp, Ms[..., None] if Ms.ndim==2 else Ms)
+    
     S21 = abcd_to_s21(Mtot, Z0=Z0)
     s21_db = 20.0 * np.log10(np.abs(S21) + 1e-20)
     return s21_db
