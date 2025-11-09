@@ -34,8 +34,8 @@ def find_f0_fc(freq, s21_db, smooth_window=11, polyorder=3, prominence_db=1.0):
     f0 = float(freq[peak_idx])
 
     # estimar nível de passband: média nos primeiros 5% (ou 3 pontos)
-    n = max(3, int(len(freq) * 0.05))
-    passband_level = np.mean(s_smooth[:n])
+    #n = max(3, int(len(freq) * 0.05))
+    passband_level = max(s_smooth)
     thresh = passband_level - 3.0
     # localizar primeiro ponto onde cai abaixo do threshold
     idxs = np.where(s_smooth <= thresh)[0]
