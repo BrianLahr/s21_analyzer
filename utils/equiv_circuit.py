@@ -2,46 +2,174 @@
 import numpy as np
 import pandas as pd
 import math
+from scipy import interpolate
 from scipy import signal
 from scipy.optimize import least_squares
 
 Z0 = 50.0
 
 # ---------------------------
-# Funções para extração
+# Funções para extração - VERSÃO CORRIGIDA
 # ---------------------------
-def find_f0_fc(freq, s21_db, smooth_window=11, polyorder=3, prominence_db=1.0):
+def find_f0_fc(freq, s21_db, prominence_db=1.0, min_distance_ghz=0.01):
     """Encontra f0 (mínimo de S21) e fc (ponto -3dB partindo do passband).
-       freq: GHz
-       s21_db: dB
+       Usa a MESMA LÓGICA da detecção de ressonâncias do código anterior.
+       freq: GHz, s21_db: dB
     """
     freq = np.asarray(freq)
     s21_db = np.asarray(s21_db)
-
-    # Suaviza (protege para arrays pequenos)
-    if len(s21_db) >= smooth_window:
-        s_smooth = signal.savgol_filter(s21_db, smooth_window, polyorder)
-    else:
-        s_smooth = s21_db
-
-    # encontra mínimos (peaks em -s21)
-    peaks, props = signal.find_peaks(-s_smooth, prominence=prominence_db)
+    
+    # MESMA LÓGICA: Criar interpolação de alta precisão
+    interp_func_db = interpolate.interp1d(freq, s21_db, kind='cubic', fill_value='extrapolate')
+    
+    # MESMA LÓGICA: Encontrar mínimos (inverter sinal pois find_peaks busca máximos)
+    inverted_s = -s21_db
+    
+    # MESMA LÓGICA: Calcular distância em pontos
+    freq_range = freq[-1] - freq[0]
+    min_distance_points = int(min_distance_ghz * len(freq) / freq_range)
+    min_distance_points = max(5, min_distance_points)  # Mínimo de 5 pontos
+    
+    # MESMA LÓGICA: Encontrar picos (mínimos no S original)
+    peaks, properties = find_peaks(
+        inverted_s,
+        prominence=prominence_db,
+        distance=min_distance_points
+    )
+    
     if peaks.size == 0:
-        return None, None, s_smooth
+        return None, None, s21_db  # Retorna dados originais, não suavizados
 
-    # escolher pico mais profundo
-    peak_idx = peaks[np.argmin(s_smooth[peaks])]
-    f0 = float(freq[peak_idx])
+    # MESMA LÓGICA: Escolher pico mais profundo
+    peak_idx = peaks[np.argmin(s21_db[peaks])]
+    
+    # MESMA LÓGICA: Refinar localização do mínimo
+    refined_f0, refined_s_db, use_original = refine_minimum_location_hybrid(
+        freq, s21_db, peak_idx, interp_func_db
+    )
+    
+    f0 = refined_f0
+    
+    # NOVA LÓGICA: Encontrar fc (frequência de corte -3dB) usando a MESMA abordagem
+    fc = find_cutoff_frequency(freq, s21_db, f0, interp_func_db)
+    
+    return f0, fc, s21_db  # Retorna dados originais, não suavizados
 
-    # estimar nível de passband: média nos primeiros 5% (ou 3 pontos)
-    #n = max(3, int(len(freq) * 0.05))
-    passband_level = max(s_smooth)
-    thresh = passband_level - 3.0
-    # localizar primeiro ponto onde cai abaixo do threshold
-    idxs = np.where(s_smooth <= thresh)[0]
-    fc = float(freq[idxs[0]]) if idxs.size else None
+def refine_minimum_location_hybrid(freq, s_db, peak_idx, interp_func_db, window_size=15):
+    """
+    Refina a localização do mínimo usando estratégia híbrida.
+    MESMA LÓGICA do código anterior.
+    Retorna: (frequência, s_db, use_original)
+    """
+    n = len(freq)
+    start_idx = max(0, peak_idx - window_size)
+    end_idx = min(n, peak_idx + window_size + 1)
+    
+    # Pegar região ao redor do pico
+    freq_region = freq[start_idx:end_idx]
+    s_region = s_db[start_idx:end_idx]
+    
+    # Encontrar índice do mínimo absoluto na região (dados originais)
+    min_idx_original = np.argmin(s_region)
+    freq_min_original = freq_region[min_idx_original]
+    s_min_original = s_region[min_idx_original]
+    
+    # ESTRATÉGIA 1: Ajuste quadrático nos dados originais
+    if len(freq_region) >= 5:  # Mais pontos para melhor ajuste
+        try:
+            # Ajuste quadrático para encontrar mínimo exato
+            coeffs = np.polyfit(freq_region, s_region, 2)
+            a, b, c = coeffs
+            
+            # Mínimo da parábola: x = -b/(2a)
+            if a > 0.001:  # Concavidade para cima significativa
+                exact_freq = -b / (2 * a)
+                exact_s = a * exact_freq**2 + b * exact_freq + c
+                
+                # Verificar se está dentro da região e é melhor que o original
+                if (freq_region[0] <= exact_freq <= freq_region[-1] and
+                    exact_s <= s_min_original + 0.1):  # Não pode ser pior
+                    
+                    # VALIDAÇÃO: Verificar com interpolação cúbica
+                    interp_s = float(interp_func_db(exact_freq))
+                    
+                    # Se a interpolação confirma, usar valor refinado
+                    if abs(exact_s - interp_s) < 0.5:  # Diferença pequena
+                        return exact_freq, interp_s, False
+        
+        except:
+            pass
+    
+    # ESTRATÉGIA 2: Busca por mínimos na interpolação de alta resolução
+    try:
+        # Criar grid fino na região
+        freq_fine = np.linspace(freq_region[0], freq_region[-1], 1000)
+        s_fine = interp_func_db(freq_fine)
+        
+        # Encontrar mínimo no grid fino
+        min_idx_fine = np.argmin(s_fine)
+        freq_min_fine = freq_fine[min_idx_fine]
+        s_min_fine = s_fine[min_idx_fine]
+        
+        # Só usar se for significativamente melhor que o original
+        if s_min_fine < s_min_original - 0.01:  # Pelo menos 0.01dB melhor
+            return freq_min_fine, s_min_fine, False
+    
+    except:
+        pass
+    
+    # ESTRATÉGIA 3: Fallback para o melhor ponto original
+    return freq_min_original, s_min_original, True
 
-    return f0, fc, s_smooth
+def find_cutoff_frequency(freq, s_db, f0, interp_func_db):
+    """
+    Encontra a frequência de corte fc (ponto -3dB partindo do passband).
+    Usa a MESMA LÓGICA da função find_bandwidth_points_corrected.
+    """
+    def find_crossing_points(freq_array, y_array, target_val):
+        """Encontra os pontos onde a curva cruza o valor target - MESMA LÓGICA"""
+        crossings = []
+        for i in range(len(freq_array) - 1):
+            if (y_array[i] - target_val) * (y_array[i+1] - target_val) < 0:
+                # Interpolação linear para encontrar o ponto exato
+                x1, x2 = freq_array[i], freq_array[i+1]
+                y1, y2 = y_array[i], y_array[i+1]
+                if y2 - y1 != 0:
+                    x_cross = x1 + (target_val - y1) * (x2 - x1) / (y2 - y1)
+                    crossings.append(x_cross)
+        return crossings
+    
+    # Encontrar nível do passband (máximo de S21 antes da ressonância)
+    # Buscar apenas na região antes da ressonância
+    mask_pre_resonance = freq < f0
+    if np.sum(mask_pre_resonance) == 0:
+        return None
+    
+    freq_pre = freq[mask_pre_resonance]
+    s_pre = s_db[mask_pre_resonance]
+    
+    if len(freq_pre) == 0:
+        return None
+    
+    # Usar o valor máximo como nível do passband
+    passband_level = np.max(s_pre)
+    cutoff_threshold = passband_level - 3.0  # -3dB do passband
+    
+    # Encontrar todos os cruzamentos com o threshold de corte
+    crossings = find_crossing_points(freq, s_db, cutoff_threshold)
+    
+    if len(crossings) == 0:
+        return None
+    
+    # Encontrar o cruzamento mais próximo antes da ressonância
+    crossings_before = [x for x in crossings if x < f0]
+    if len(crossings_before) == 0:
+        return None
+    
+    # Pegar o último cruzamento antes da ressonância (mais próximo de f0)
+    fc = max(crossings_before)
+    
+    return fc
 
 def compute_LC_from_fc_f0(fc, f0):
     """Aplicação direta das fórmulas do capítulo (fc,f0 em GHz) -> C em pF, L em nH."""
@@ -201,8 +329,9 @@ def analyze_equiv_circuits_from_df(df,
         else:
             S11_complex = None
 
-        # --- análise existente (sem mudanças) ---
-        f0, fc, s_smooth = find_f0_fc(freq, s21_db)
+        # --- análise existente (COM A NOVA LÓGICA) ---
+        # REMOVIDO: suavização dos dados
+        f0, fc, s_original = find_f0_fc(freq, s21_db)  # Agora retorna dados originais
         L_nH, C_pF = (None, None)
         if f0 is not None and fc is not None:
             L_nH, C_pF = compute_LC_from_fc_f0(fc, f0)
@@ -237,7 +366,7 @@ def analyze_equiv_circuits_from_df(df,
         series_store[group_id] = {
             'freq': freq,
             's21_db': s21_db,
-            's21_smooth': s_smooth,
+            's21_smooth': s_original,  # Agora é igual aos dados originais
             's21_model_db': s21_model_db,
             's11_db': s11_db,
             'S21_complex': S21_complex,
@@ -259,7 +388,6 @@ def analyze_equiv_circuits_from_df(df,
         correlations = geom_to_LC_correlations(results_df, available_geom_cols)
     
     return results_df.reset_index(drop=True), series_store, correlations
-
 
 # ---------------------------
 # Correlação simples entre geométricos e L/C
