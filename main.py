@@ -8,14 +8,22 @@ import zipfile
 from utils.file_handlers import handle_file_upload, display_file_preview
 from utils.data_processors import identify_columns, process_data
 
-# ------------- UI para Circuito Equivalente ---------------
+# ------------- UI para Circuito Equivalente (versão com Plotly) ---------------
 import io
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 
 def create_equiv_circuit_ui(equiv_module):
     st.header("⚙️ Circuito Equivalente — Extração RLC")
-    st.write("Faça upload de um CSV com colunas geométricas + `Freq [GHz]` + `dB(S(1,1)) []` + `dB(S(2,1)) []`.")
-    uploaded = st.file_uploader("Carregue CSV para extração de circuito equivalente", type=['csv'], key="equiv_uploader")
+    st.write(
+        "Faça upload de um CSV com colunas geométricas + `Freq [GHz]` + "
+        "`dB(S(1,1)) []` + `dB(S(2,1)) []`."
+    )
+
+    uploaded = st.file_uploader(
+        "Carregue CSV para extração de circuito equivalente",
+        type=['csv'],
+        key="equiv_uploader"
+    )
     if not uploaded:
         st.info("Faça upload de um CSV para começar.")
         return
@@ -29,39 +37,86 @@ def create_equiv_circuit_ui(equiv_module):
     st.write("Preview dos dados:")
     st.dataframe(df.head())
 
-    if st.button("🔎 Analisar e extrair circuito equivalente"):
+    if st.button("🔎 Analisar e extrair circuito equivalente", type="primary"):
         with st.spinner("Analisando..."):
             try:
                 results_df, series = equiv_module.analyze_equiv_circuits_from_df(df)
-                st.success("Extração concluída!")
+                st.success("✅ Extração concluída!")
             except Exception as e:
                 st.error(f"Erro durante a análise: {e}")
                 return
 
-        st.subheader("Tabela de parâmetros extraídos")
+        # ===== Tabela de resultados =====
+        st.subheader("📋 Parâmetros extraídos (R, L, C, f₀, f_c)")
         st.dataframe(results_df)
 
-        # download excel
+        # Download em Excel
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine='openpyxl') as writer:
             results_df.to_excel(writer, index=False, sheet_name='equiv_results')
         buf.seek(0)
-        st.download_button("📥 Baixar resultados (.xlsx)", buf, file_name="equiv_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            "📥 Baixar resultados (.xlsx)",
+            buf,
+            file_name="equiv_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
-        # plot comparativo para o primeiro caso (exemplo)
-        st.subheader("Comparativo Medido vs Modelo (exemplo do primeiro caso)")
+        # ===== Plot interativo =====
+        st.subheader("📈 Comparativo Medido vs Modelo (exemplo do primeiro caso)")
         first_key = list(series.keys())[0]
         sr = series[first_key]
-        fig, ax = plt.subplots(figsize=(8,4))
-        equiv_module.plot_comparison_single_case(sr, title=first_key, ax=ax)
-        st.pyplot(fig)
+        freq = sr["freq"]
+        s21_db = sr["s21_db"]
+        s21_smooth = sr["s21_smooth"]
+        s21_model = sr["s21_model_db"]
 
-        # mostrar correlações geom -> L/C
-        st.subheader("Correlação geométrica → L/C (Pearson)")
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=freq, y=s21_db,
+            mode="markers",
+            marker=dict(size=4, color="gray", opacity=0.6),
+            name="S21 medido (dB)"
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=freq, y=s21_smooth,
+            mode="lines",
+            line=dict(color="blue", width=2),
+            name="S21 suavizado"
+        ))
+
+        if s21_model is not None:
+            fig.add_trace(go.Scatter(
+                x=freq, y=s21_model,
+                mode="lines",
+                line=dict(color="red", width=2, dash="dash"),
+                name="S21 modelo (R||L||C)"
+            ))
+
+        fig.update_layout(
+            xaxis_title="Frequência [GHz]",
+            yaxis_title="S21 [dB]",
+            title=f"Comparação Medido vs Modelo — {first_key}",
+            legend=dict(x=0.02, y=0.98, bgcolor="rgba(255,255,255,0.7)"),
+            template="plotly_white",
+            height=450
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # ===== Correlações geométricas =====
+        st.subheader("📊 Correlação geométrica → L/C (Pearson)")
         corr = equiv_module.geom_to_LC_correlations(results_df)
         st.json(corr)
 
-        st.info("Observação: L e C foram extraídos analiticamente; R foi estimado por ajuste mantendo L/C fixos. Se quiser melhorar ajuste geral, podemos adicionar ajuste simultâneo ou modelo Pi-type.")
+        st.info(
+            "Observação: L e C foram extraídos analiticamente; "
+            "R foi estimado por ajuste mantendo L/C fixos. "
+            "Para ajuste mais preciso ou modelo Pi-type, é possível estender o módulo."
+        )
 
 
 def setup_ui():
