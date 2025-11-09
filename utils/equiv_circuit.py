@@ -145,10 +145,12 @@ def analyze_equiv_circuits_from_df(df,
                                    geom_cols=None,
                                    freq_col='Freq [GHz]',
                                    s11_col='dB(S(1,1)) []',
-                                   s21_col='dB(S(2,1)) []'):
+                                   s21_col='dB(S(2,1)) []',
+                                   ang_s11_col='ang_deg(S(1,1)) [deg]',
+                                   ang_s21_col='ang_deg(S(2,1)) [deg]'):
     """
-    df: pandas DataFrame com colunas geom_cols + freq_col + s11_col + s21_col
-    Retorna: resultados_df, per-group time series dict
+    df: pandas DataFrame com colunas geom_cols + freq_col + s11_col + s21_col (+ fases opcionais)
+    Retorna: resultados_df, per-group time series dict, correlations
     """
     # Definir colunas geométricas padrão se não especificadas
     if geom_cols is None:
@@ -156,44 +158,55 @@ def analyze_equiv_circuits_from_df(df,
     
     # Filtrar apenas colunas geométricas que existem no DataFrame
     available_geom_cols = [col for col in geom_cols if col in df.columns]
-    
     if not available_geom_cols:
         raise ValueError("Nenhuma coluna geométrica encontrada no DataFrame")
     
-    # sanity check para colunas obrigatórias
+    # Checar colunas obrigatórias
     required_cols = [freq_col, s11_col, s21_col]
     for c in required_cols:
         if c not in df.columns:
             raise ValueError(f"Coluna esperada não encontrada: {c}")
-
-    # convert numeric
+    
+    # Converter numérico
     df2 = df.copy()
-    df2[freq_col] = pd.to_numeric(df2[freq_col], errors='coerce')
-    df2[s11_col] = pd.to_numeric(df2[s11_col], errors='coerce')
-    df2[s21_col] = pd.to_numeric(df2[s21_col], errors='coerce')
-
-    # Remover linhas com valores NaN nas colunas críticas
+    for col in [freq_col, s11_col, s21_col, ang_s11_col, ang_s21_col]:
+        if col in df2.columns:
+            df2[col] = pd.to_numeric(df2[col], errors='coerce')
+    
+    # Remover linhas inválidas
     df2 = df2.dropna(subset=[freq_col, s21_col])
 
     group_keys = available_geom_cols
     grouped = df2.groupby(group_keys)
 
     results = []
-    series_store = {}  # para plotar por caso
+    series_store = {}
     
     for gvals, gdf in grouped:
         gdf_sorted = gdf.sort_values(freq_col)
         freq = gdf_sorted[freq_col].values
         s21_db = gdf_sorted[s21_col].values
-        s11_db = gdf_sorted[s11_col].values
+        s11_db = gdf_sorted[s11_col].values if s11_col in gdf_sorted else np.full_like(freq, np.nan)
 
-        # extração f0, fc
+        # --- NOVO: fase e conversão para forma complexa ---
+        if ang_s21_col in gdf_sorted and not gdf_sorted[ang_s21_col].isna().all():
+            ang_s21 = np.deg2rad(gdf_sorted[ang_s21_col].values)
+            S21_complex = 10 ** (s21_db / 20) * np.exp(1j * ang_s21)
+        else:
+            S21_complex = None
+
+        if ang_s11_col in gdf_sorted and not gdf_sorted[ang_s11_col].isna().all():
+            ang_s11 = np.deg2rad(gdf_sorted[ang_s11_col].values)
+            S11_complex = 10 ** (s11_db / 20) * np.exp(1j * ang_s11)
+        else:
+            S11_complex = None
+
+        # --- análise existente (sem mudanças) ---
         f0, fc, s_smooth = find_f0_fc(freq, s21_db)
         L_nH, C_pF = (None, None)
         if f0 is not None and fc is not None:
             L_nH, C_pF = compute_LC_from_fc_f0(fc, f0)
         
-        # ajustar R (apenas R) para melhorar ajuste com L,C (se obtidos)
         R_est = None
         fit_success = False
         if L_nH is not None and C_pF is not None:
@@ -204,12 +217,10 @@ def analyze_equiv_circuits_from_df(df,
                 R_est = None
                 fit_success = False
         
-        # Simula com esses parâmetros (se tiver L,C)
         s21_model_db = None
         if L_nH is not None and C_pF is not None and R_est is not None:
             s21_model_db = s21_db_from_RLC(freq, R_est, L_nH, C_pF)
-
-        # montar output
+        
         row = dict(zip(group_keys, gvals if isinstance(gvals, tuple) else (gvals,)))
         row.update({
             'f0 [GHz]': f0,
@@ -222,7 +233,6 @@ def analyze_equiv_circuits_from_df(df,
         })
         results.append(row)
         
-        # Usar string identificadora única para o grupo
         group_id = str(gvals) if isinstance(gvals, tuple) else f"({gvals})"
         series_store[group_id] = {
             'freq': freq,
@@ -230,6 +240,8 @@ def analyze_equiv_circuits_from_df(df,
             's21_smooth': s_smooth,
             's21_model_db': s21_model_db,
             's11_db': s11_db,
+            'S21_complex': S21_complex,
+            'S11_complex': S11_complex,
             'group_values': gvals,
             'params': {
                 'L_nH': L_nH,
@@ -241,13 +253,13 @@ def analyze_equiv_circuits_from_df(df,
         }
 
     results_df = pd.DataFrame(results)
-    
-    # Calcular correlações automaticamente
+
     correlations = {}
     if not results_df.empty:
         correlations = geom_to_LC_correlations(results_df, available_geom_cols)
     
     return results_df.reset_index(drop=True), series_store, correlations
+
 
 # ---------------------------
 # Correlação simples entre geométricos e L/C
