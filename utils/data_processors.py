@@ -15,9 +15,9 @@ def identify_columns(df: pd.DataFrame, s_param_type: str = "S21"):
         col_lower = str(col).lower()
         if any(x in col_lower for x in ['freq', 'frequency', 'ghz', 'mhz']):
             freq_col = col
-        elif s_param_type == "S21" and any(x in col_lower for x in ['s21', 's(2,1)', 'db(s(2,1))', 'insertion']):
+        elif s_param_type == "S21" and any(x in col_lower for x in ['s21', 's(2,1)', 'db(s(2,1))', 'db(st(2,1))', 'insertion']):
             s_col = col
-        elif s_param_type == "S11" and any(x in col_lower for x in ['s11', 's(1,1)', 'db(s(1,1))', 'reflection', 'return']):
+        elif s_param_type == "S11" and any(x in col_lower for x in ['s11', 's(1,1)', 'db(s(1,1))', 'db(st(1,1))', 'reflection', 'return']):
             s_col = col
         elif any(x in col_lower for x in ['perm', 'permittivity', 'epsilon', 'dielectric']):
             perm_col = col
