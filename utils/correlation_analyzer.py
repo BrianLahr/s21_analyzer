@@ -174,38 +174,167 @@ def select_optimal_parameters(df, param_cols):
                     key=f"opt_{param}"
                 )
             else:
-                # Slider para muitos valores
+                # Campo numérico para digitação em vez de slider
                 min_val = float(df[param].min())
                 max_val = float(df[param].max())
                 mean_val = float(df[param].mean())
                 
-                optimal_params[param] = st.slider(
-                    f"{param}:",
+                st.write(f"**{param}**")
+                st.caption(f"Range: {min_val:.4f} - {max_val:.4f}")
+                
+                optimal_params[param] = st.number_input(
+                    f"Valor para {param}:",
                     min_value=min_val,
                     max_value=max_val,
                     value=mean_val,
                     step=(max_val - min_val) / 100,
+                    format="%.6f",
                     key=f"opt_{param}"
                 )
+    
+    # Mostrar informações sobre as linhas encontradas
+    if optimal_params:
+        st.markdown("---")
+        st.subheader("🔍 Linhas Encontradas")
+        
+        # Buscar linhas que correspondem exatamente aos parâmetros selecionados
+        exact_match_mask = pd.Series([True] * len(df))
+        for param, value in optimal_params.items():
+            exact_match_mask &= (df[param] == value)
+        
+        exact_matches = df[exact_match_mask]
+        
+        if not exact_matches.empty:
+            st.success(f"✅ Encontradas {len(exact_matches)} linha(s) com combinação exata")
+            
+            # Mostrar primeiras linhas encontradas
+            with st.expander("📋 Ver linhas exatas encontradas"):
+                st.dataframe(exact_matches.head(10), use_container_width=True)
+                
+                if len(exact_matches) > 10:
+                    st.info(f"📄 Mostrando 10 de {len(exact_matches)} linhas encontradas")
+        else:
+            st.warning("⚠️ Nenhuma linha encontrada com combinação exata")
+            
+            # Buscar linhas mais próximas
+            st.info("🔎 Buscando combinações mais próximas...")
+            
+            # Calcular distância para cada linha
+            distances = []
+            for idx, row in df.iterrows():
+                distance = 0
+                for param, optimal_value in optimal_params.items():
+                    if param in row:
+                        # Distância normalizada
+                        param_range = df[param].max() - df[param].min()
+                        if param_range > 0:
+                            distance += abs(row[param] - optimal_value) / param_range
+                        else:
+                            distance += abs(row[param] - optimal_value)
+                distances.append(distance)
+            
+            df_with_distances = df.copy()
+            df_with_distances['distance_to_optimal'] = distances
+            
+            # Ordenar por distância e pegar as mais próximas
+            closest_matches = df_with_distances.nsmallest(5, 'distance_to_optimal')
+            
+            st.success(f"🎯 {len(closest_matches)} combinações mais próximas encontradas")
+            
+            with st.expander("📋 Ver combinações mais próximas"):
+                # Mostrar apenas colunas relevantes
+                display_cols = param_cols + ['distance_to_optimal']
+                if len(closest_matches) > 0:
+                    st.dataframe(closest_matches[display_cols], use_container_width=True)
+                    
+                    # Mostrar diferenças
+                    st.markdown("#### 📊 Diferenças em relação ao ótimo:")
+                    diff_data = []
+                    for param in param_cols:
+                        closest_val = closest_matches[param].iloc[0]
+                        optimal_val = optimal_params[param]
+                        diff = closest_val - optimal_val
+                        diff_pct = (diff / optimal_val * 100) if optimal_val != 0 else 0
+                        diff_data.append({
+                            'Parâmetro': param,
+                            'Valor Ótimo': optimal_val,
+                            'Valor Mais Próximo': closest_val,
+                            'Diferença': diff,
+                            'Diferença %': f"{diff_pct:.2f}%"
+                        })
+                    
+                    diff_df = pd.DataFrame(diff_data)
+                    st.dataframe(diff_df, use_container_width=True)
     
     return optimal_params
 
 def filter_data_for_optimal_combination(df, optimal_params, param_cols, tolerance=0.01):
     """Filtra dados próximos à combinação ótima selecionada"""
-    mask = pd.Series([True] * len(df))
     
+    # Primeiro tentar busca exata
+    exact_mask = pd.Series([True] * len(df))
     for param, optimal_value in optimal_params.items():
         if param in df.columns:
-            # Calcular tolerância baseada na variação do parâmetro
-            param_range = df[param].max() - df[param].min()
-            if param_range > 0:
-                current_tolerance = tolerance * param_range
-            else:
-                current_tolerance = abs(optimal_value) * tolerance if optimal_value != 0 else 0.01
-                
-            mask &= (abs(df[param] - optimal_value) <= current_tolerance)
+            exact_mask &= (df[param] == optimal_value)
     
-    return df[mask].copy()
+    exact_matches = df[exact_mask]
+    
+    if not exact_matches.empty:
+        st.info(f"🎯 Usando {len(exact_matches)} linha(s) com combinação exata")
+        return exact_matches
+    
+    # Se não encontrou exato, buscar combinações próximas
+    st.info("🔍 Nenhuma combinação exata encontrada. Buscando combinações próximas...")
+    
+    # Calcular distância ponderada para cada linha
+    distances = []
+    for idx, row in df.iterrows():
+        distance = 0
+        for param, optimal_value in optimal_params.items():
+            if param in row:
+                # Normalizar pela variação do parâmetro
+                param_range = df[param].max() - df[param].min()
+                if param_range > 0:
+                    distance += (abs(row[param] - optimal_value) / param_range) ** 2
+                else:
+                    distance += abs(row[param] - optimal_value) ** 2
+        distances.append(np.sqrt(distance))
+    
+    df_with_distances = df.copy()
+    df_with_distances['distance_to_optimal'] = distances
+    
+    # Usar as N combinações mais próximas
+    n_closest = min(50, len(df))  # Máximo de 50 combinações mais próximas
+    closest_matches = df_with_distances.nsmallest(n_closest, 'distance_to_optimal')
+    
+    # Aplicar tolerância baseada na distância
+    max_distance = closest_matches['distance_to_optimal'].max()
+    if max_distance > 0:
+        # Manter apenas combinações dentro de uma tolerância razoável
+        tolerance_threshold = max_distance * 0.5  # 50% da distância máxima das mais próximas
+        final_matches = closest_matches[closest_matches['distance_to_optimal'] <= tolerance_threshold]
+    else:
+        final_matches = closest_matches
+    
+    if not final_matches.empty:
+        st.success(f"🎯 Usando {len(final_matches)} combinações mais próximas (distância média: {final_matches['distance_to_optimal'].mean():.4f})")
+        
+        # Mostrar estatísticas das combinações selecionadas
+        with st.expander("📊 Estatísticas das combinações selecionadas"):
+            for param in param_cols:
+                if param in final_matches.columns:
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric(f"{param} - Média", f"{final_matches[param].mean():.4f}")
+                    with col2:
+                        st.metric(f"{param} - Min", f"{final_matches[param].min():.4f}")
+                    with col3:
+                        st.metric(f"{param} - Max", f"{final_matches[param].max():.4f}")
+        
+        return final_matches.drop(columns=['distance_to_optimal'])
+    else:
+        st.error("❌ Não foram encontradas combinações suficientemente próximas.")
+        return pd.DataFrame()
 
 def calculate_response_characteristics(df, freq_col, s_col):
     """Calcula características de resposta a partir dos dados S-parameters"""
