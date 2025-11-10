@@ -8,6 +8,7 @@ import io
 
 from utils.file_handlers import handle_file_upload, display_file_preview
 from utils.data_processors import identify_columns, process_data
+from utils.correlation_analyzer import create_correlation_tab
 
 # ======================
 # Setup da UI
@@ -60,13 +61,14 @@ def setup_ui():
         if 'uploader_key' in st.session_state:
             st.session_state.uploader_key += 1
 
-    # Abas principais
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    #Abas principais - ADICIONE A NOVA ABA
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([  # Mude para 6 abas
         "📈 Análise de Dados S11/S21", 
         "📊 Visualização de Resultados",
-        "🔄 Comparação de Curvas",
+        "🔄 Comparação de Curvas", 
         "🗂️ Organizador de Resultados",
-        "⚙️ Circuito Equivalente"
+        "⚙️ Circuito Equivalente",
+        "📊 Análise de Correlação"  # NOVA ABA
     ])
     
     with tab1:
@@ -101,6 +103,9 @@ def setup_ui():
 
     with tab5:
         create_equiv_circuit_tab()
+
+    with tab6:  # NOVA ABA
+        create_correlation_tab()
 
 # ======================
 # Circuito Equivalente - Versão Melhorada
