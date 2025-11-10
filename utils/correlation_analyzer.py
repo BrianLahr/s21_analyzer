@@ -10,98 +10,139 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 import io
 
+from utils.data_processors import identify_columns
+
 def create_correlation_analysis():
     """Cria interface para análise de correlação entre parâmetros e características de resposta"""
     
     st.header("📊 Análise de Correlação - Parâmetros vs Resposta")
     
-    # Verificar se existem resultados para analisar
-    all_results = []
-    for key in st.session_state:
-        if key.startswith("results_"):
-            all_results.extend(st.session_state[key])
+    # Upload do arquivo CSV
+    uploaded_file = st.file_uploader(
+        "**Selecione o arquivo CSV exportado do HFSS**",
+        type=['csv'],
+        key="correlation_file_upload"
+    )
     
-    if not all_results:
-        st.info("ℹ️ Nenhum resultado de análise disponível. Execute primeiro a análise de ressonâncias na aba 'Análise de Dados S11/S21'.")
+    if not uploaded_file:
+        st.info("👆 Faça upload de um arquivo CSV para iniciar a análise de correlação")
         return
     
-    # Converter para DataFrame
-    results_df = pd.DataFrame(all_results)
-    
-    # Identificar colunas de parâmetros e características
-    param_cols = identify_parameter_columns(results_df)
-    response_cols = identify_response_columns(results_df)
-    
-    if not param_cols:
-        st.error("❌ Não foram encontradas colunas de parâmetros de otimização no dataset.")
-        return
-    
-    if not response_cols:
-        st.error("❌ Não foram encontradas colunas de características de resposta no dataset.")
-        return
-    
-    st.success(f"✅ Encontrados {len(param_cols)} parâmetros e {len(response_cols)} características de resposta")
-    
-    # Configurações da análise
-    st.markdown("---")
-    st.subheader("🔧 Configurações da Análise")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        correlation_method = st.selectbox(
-            "Método de correlação:",
-            ["Pearson", "Spearman"],
-            help="Pearson: correlação linear | Spearman: correlação monotônica"
-        )
+    try:
+        # Carregar dados
+        df = pd.read_csv(uploaded_file)
         
-        min_correlation = st.slider(
-            "Correlação mínima para destacar:",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.3,
-            step=0.05,
-            help="Valor absoluto mínimo para considerar correlação significativa"
-        )
-    
-    with col2:
-        analysis_type = st.selectbox(
-            "Tipo de análise:",
-            ["Matriz de Correlação", "Análise Individual", "Análise PCA"],
-            help="Matriz: visão geral | Individual: detalhes por parâmetro | PCA: componentes principais"
-        )
+        # Identificar colunas de parâmetros (excluindo frequência e S-parameters)
+        freq_cols, s_cols, param_cols, perm_cols = identify_columns(df)
         
-        normalize_data = st.checkbox(
-            "Normalizar dados",
-            value=True,
-            help="Normalizar parâmetros para mesma escala"
-        )
-    
-    # Executar análise selecionada
-    if analysis_type == "Matriz de Correlação":
-        create_correlation_matrix(results_df, param_cols, response_cols, 
-                                correlation_method, min_correlation, normalize_data)
-    
-    elif analysis_type == "Análise Individual":
-        create_individual_analysis(results_df, param_cols, response_cols, 
-                                 correlation_method, normalize_data)
-    
-    elif analysis_type == "Análise PCA":
-        create_pca_analysis(results_df, param_cols, response_cols, normalize_data)
+        if not param_cols:
+            st.error("❌ Não foram encontradas colunas de parâmetros de otimização no arquivo.")
+            return
+        
+        st.success(f"✅ Encontradas {len(param_cols)} colunas de parâmetros")
+        
+        # Seleção da combinação ótima
+        st.markdown("---")
+        st.subheader("🎯 Seleção da Combinação Ótima")
+        st.info("Selecione os valores dos parâmetros que correspondem à combinação ótima encontrada na otimização:")
+        
+        # Criar interface para seleção dos valores ótimos
+        optimal_params = select_optimal_parameters(df, param_cols)
+        
+        if not optimal_params:
+            st.warning("⚠️ Selecione valores para todos os parâmetros para continuar.")
+            return
+        
+        # Processar dados para a combinação selecionada
+        st.markdown("---")
+        st.subheader("📈 Processamento dos Dados")
+        
+        # Filtrar dados próximos à combinação ótima
+        analysis_df = filter_data_for_optimal_combination(df, optimal_params, param_cols)
+        
+        if analysis_df.empty:
+            st.error("❌ Não foram encontrados dados suficientes para a combinação selecionada.")
+            return
+        
+        st.success(f"✅ Encontrados {len(analysis_df)} pontos de dados para análise")
+        
+        # Calcular características de resposta
+        response_df = calculate_response_characteristics(analysis_df, freq_cols[0] if freq_cols else df.columns[0], 
+                                                        s_cols[0] if s_cols else df.columns[1])
+        
+        if response_df.empty:
+            st.error("❌ Não foi possível calcular características de resposta.")
+            return
+        
+        # Combinar dados
+        combined_df = pd.concat([analysis_df[param_cols], response_df], axis=1)
+        
+        # Configurações da análise
+        st.markdown("---")
+        st.subheader("🔧 Configurações da Análise")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            correlation_method = st.selectbox(
+                "Método de correlação:",
+                ["Pearson", "Spearman"],
+                help="Pearson: correlação linear | Spearman: correlação monotônica"
+            )
+            
+            min_correlation = st.slider(
+                "Correlação mínima para destacar:",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.3,
+                step=0.05,
+                help="Valor absoluto mínimo para considerar correlação significativa"
+            )
+        
+        with col2:
+            analysis_type = st.selectbox(
+                "Tipo de análise:",
+                ["Matriz de Correlação", "Análise Individual", "Análise PCA"],
+                help="Matriz: visão geral | Individual: detalhes por parâmetro | PCA: componentes principais"
+            )
+            
+            normalize_data = st.checkbox(
+                "Normalizar dados",
+                value=True,
+                help="Normalizar parâmetros para mesma escala"
+            )
+        
+        # Executar análise selecionada
+        response_cols = response_df.columns.tolist()
+        
+        if analysis_type == "Matriz de Correlação":
+            create_correlation_matrix(combined_df, param_cols, response_cols, 
+                                    correlation_method, min_correlation, normalize_data)
+        
+        elif analysis_type == "Análise Individual":
+            create_individual_analysis(combined_df, param_cols, response_cols, 
+                                     correlation_method, normalize_data)
+        
+        elif analysis_type == "Análise PCA":
+            create_pca_analysis(combined_df, param_cols, response_cols, normalize_data)
+            
+    except Exception as e:
+        st.error(f"❌ Erro ao processar arquivo: {e}")
 
-def identify_parameter_columns(df):
+def identify_parameter_columns(df, freq_cols, s_cols):
     """Identifica colunas que são parâmetros de otimização"""
     # Colunas que provavelmente são parâmetros geométricos
     parameter_indicators = ['[mm]', 'radius', 'width', 'height', 'length', 'gap', 
-                           'distance', 'thickness', 'size', 'param', 'geometry']
+                           'distance', 'thickness', 'size', 'param', 'geometry', 'optimization']
     
     param_cols = []
+    excluded_cols = freq_cols + s_cols
+    
     for col in df.columns:
-        col_lower = col.lower()
-        # Excluir colunas que são resultados
-        if any(indicator in col_lower for indicator in ['freq', 'ressonancia', 'q_', 'fwhm', 
-                                                       'sensibilidade', 'figura', 's11', 's21']):
+        if col in excluded_cols:
             continue
+            
+        col_lower = col.lower()
         
         # Incluir colunas que parecem ser parâmetros
         if any(indicator in col_lower for indicator in parameter_indicators):
@@ -112,27 +153,189 @@ def identify_parameter_columns(df):
     
     return param_cols
 
-def identify_response_columns(df):
-    """Identifica colunas que são características de resposta"""
-    response_cols = []
+def select_optimal_parameters(df, param_cols):
+    """Cria interface para seleção dos valores ótimos dos parâmetros"""
+    optimal_params = {}
     
-    # Características principais que calculamos
-    target_cols = [
-        'frequencia_ressonancia_ghz',
-        's11_ressonancia_db', 's21_ressonancia_db',
-        's11_ressonancia_linear', 's21_ressonancia_linear',
-        'Q_3db', 'Q_linear',
-        'fwhm_3db_ghz', 'fwhm_linear_ghz',
-        'sensibilidade_mhz_sqrt_er',
-        'figura_merito_3db', 'figura_merito_linear',
-        'figura_merito_normal_3db', 'figura_merito_normal_linear'
-    ]
+    # Layout em colunas para melhor organização
+    num_cols = 3
+    cols = st.columns(num_cols)
     
-    for col in target_cols:
-        if col in df.columns and not df[col].isna().all():
-            response_cols.append(col)
+    for i, param in enumerate(param_cols):
+        with cols[i % num_cols]:
+            unique_vals = sorted(df[param].unique())
+            
+            if len(unique_vals) <= 10:
+                # Selectbox para poucos valores
+                optimal_params[param] = st.selectbox(
+                    f"{param}:",
+                    options=unique_vals,
+                    index=len(unique_vals)//2 if unique_vals else 0,
+                    key=f"opt_{param}"
+                )
+            else:
+                # Slider para muitos valores
+                min_val = float(df[param].min())
+                max_val = float(df[param].max())
+                mean_val = float(df[param].mean())
+                
+                optimal_params[param] = st.slider(
+                    f"{param}:",
+                    min_value=min_val,
+                    max_value=max_val,
+                    value=mean_val,
+                    step=(max_val - min_val) / 100,
+                    key=f"opt_{param}"
+                )
     
-    return response_cols
+    return optimal_params
+
+def filter_data_for_optimal_combination(df, optimal_params, param_cols, tolerance=0.01):
+    """Filtra dados próximos à combinação ótima selecionada"""
+    mask = pd.Series([True] * len(df))
+    
+    for param, optimal_value in optimal_params.items():
+        if param in df.columns:
+            # Calcular tolerância baseada na variação do parâmetro
+            param_range = df[param].max() - df[param].min()
+            if param_range > 0:
+                current_tolerance = tolerance * param_range
+            else:
+                current_tolerance = abs(optimal_value) * tolerance if optimal_value != 0 else 0.01
+                
+            mask &= (abs(df[param] - optimal_value) <= current_tolerance)
+    
+    return df[mask].copy()
+
+def calculate_response_characteristics(df, freq_col, s_col):
+    """Calcula características de resposta a partir dos dados S-parameters"""
+    
+    response_data = []
+    
+    # Agrupar por combinações únicas de parâmetros (se houver múltiplas frequências)
+    group_cols = [col for col in df.columns if col not in [freq_col, s_col]]
+    
+    if not group_cols:
+        # Se não há parâmetros para agrupar, processar cada linha individualmente
+        for idx, row in df.iterrows():
+            characteristics = calculate_single_response(row[freq_col], row[s_col])
+            if characteristics:
+                response_data.append(characteristics)
+    else:
+        # Agrupar por combinações de parâmetros e processar curva S completa
+        groups = df.groupby(group_cols)
+        
+        for name, group in groups:
+            if len(group) > 5:  # Mínimo de pontos para análise
+                characteristics = analyze_s_curve(group, freq_col, s_col)
+                if characteristics:
+                    # Adicionar identificadores do grupo
+                    if isinstance(name, tuple):
+                        for i, col in enumerate(group_cols):
+                            characteristics[col] = name[i]
+                    else:
+                        characteristics[group_cols[0]] = name
+                    
+                    response_data.append(characteristics)
+    
+    return pd.DataFrame(response_data) if response_data else pd.DataFrame()
+
+def calculate_single_response(freq, s_db):
+    """Calcula características para um único ponto (simplificado)"""
+    try:
+        # Para um único ponto, estimativas simplificadas
+        return {
+            'frequencia_ressonancia_ghz': float(freq),
+            's_ressonancia_db': float(s_db),
+            's_ressonancia_linear': 10**(float(s_db)/20),
+            'Q_estimado': 1000,  # Valor padrão
+            'largura_banda_estimada': 0.001  # Valor padrão
+        }
+    except:
+        return None
+
+def analyze_s_curve(group, freq_col, s_col):
+    """Analisa curva S completa para extrair características"""
+    try:
+        # Ordenar por frequência
+        group = group.sort_values(freq_col)
+        freq = group[freq_col].values
+        s_db = group[s_col].values
+        
+        if len(freq) < 5:
+            return None
+        
+        # Encontrar ressonância (mínimo em S11 ou máximo em S21)
+        if 's11' in s_col.lower():
+            resonance_idx = np.argmin(s_db)
+        else:  # S21
+            resonance_idx = np.argmax(s_db)
+        
+        freq_resonance = freq[resonance_idx]
+        s_resonance_db = s_db[resonance_idx]
+        s_resonance_linear = 10**(s_resonance_db/20)
+        
+        # Estimativa simplificada de Q e largura de banda
+        # Encontrar pontos -3dB
+        if 's11' in s_col.lower():
+            target_db = s_resonance_db + 3  # Para S11
+        else:
+            target_db = s_resonance_db - 3  # Para S21
+        
+        # Interpolação para encontrar bandwidth
+        from scipy import interpolate
+        try:
+            interp_func = interpolate.interp1d(freq, s_db, kind='linear', bounds_error=False, fill_value='extrapolate')
+            
+            # Buscar pontos de cruzamento
+            left_freq, right_freq = find_bandwidth_points(freq, s_db, freq_resonance, target_db)
+            
+            if left_freq and right_freq:
+                bandwidth = right_freq - left_freq
+                Q_factor = freq_resonance / bandwidth if bandwidth > 0 else 1000
+            else:
+                bandwidth = 0.001
+                Q_factor = 1000
+                
+        except:
+            bandwidth = 0.001
+            Q_factor = 1000
+        
+        return {
+            'frequencia_ressonancia_ghz': freq_resonance,
+            's_ressonancia_db': s_resonance_db,
+            's_ressonancia_linear': s_resonance_linear,
+            'Q_3db': Q_factor,
+            'fwhm_3db_ghz': bandwidth,
+            'profundidade_ressonancia_db': abs(s_resonance_db) if 's11' in s_col.lower() else s_resonance_db
+        }
+        
+    except Exception as e:
+        st.warning(f"⚠️ Erro na análise da curva: {e}")
+        return None
+
+def find_bandwidth_points(freq, s_db, center_freq, target_db):
+    """Encontra pontos de largura de banda"""
+    try:
+        # Encontrar cruzamentos com o valor target
+        crossings = []
+        for i in range(len(freq)-1):
+            if (s_db[i] - target_db) * (s_db[i+1] - target_db) <= 0:
+                # Interpolação linear
+                x1, x2 = freq[i], freq[i+1]
+                y1, y2 = s_db[i], s_db[i+1]
+                if y2 != y1:
+                    x_cross = x1 + (target_db - y1) * (x2 - x1) / (y2 - y1)
+                    crossings.append(x_cross)
+        
+        if len(crossings) >= 2:
+            # Encontrar os dois cruzamentos mais próximos da frequência central
+            crossings_sorted = sorted(crossings, key=lambda x: abs(x - center_freq))
+            return min(crossings_sorted[0], crossings_sorted[1]), max(crossings_sorted[0], crossings_sorted[1])
+        else:
+            return None, None
+    except:
+        return None, None
 
 def create_correlation_matrix(df, param_cols, response_cols, method, min_corr, normalize):
     """Cria matriz de correlação entre parâmetros e características"""
@@ -434,7 +637,7 @@ def create_pca_analysis(df, param_cols, response_cols, normalize):
     with col2:
         st.dataframe(variance_df.round(4), use_container_width=True)
         
-        total_variance = variance_df['Variência Acumulada'].iloc[-1]
+        total_variance = variance_df['Variância Acumulada'].iloc[-1]
         st.metric("Variância Total Explicada", f"{total_variance:.1%}")
     
     # Loadings dos componentes
