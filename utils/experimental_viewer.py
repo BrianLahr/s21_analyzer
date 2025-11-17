@@ -66,28 +66,36 @@ def create_experimental_viewer():
                 value=True,
                 help="Ajustar descontinuidades de fase"
             )
-        
+    
         # Controles de frequência
         st.markdown("---")
         st.subheader("📊 Controle de Faixa de Frequência")
-        
+
         # Obter limites de frequência
         freq_min = df['freq_ghz'].min()
         freq_max = df['freq_ghz'].max()
-        
+
+        # Inicializar session_state para o slider se não existir
+        if 'freq_slider_values' not in st.session_state:
+            st.session_state.freq_slider_values = (float(freq_min), float(freq_max))
+
         col1, col2, col3 = st.columns([2, 1, 1])
-        
+
         with col1:
-            # Slider de frequência
+            # Slider de frequência com key única baseada no arquivo
+            slider_key = f"freq_slider_{uploaded_file.name}"
             freq_range = st.slider(
                 "Faixa de frequência (GHz):",
                 min_value=float(freq_min),
                 max_value=float(freq_max),
-                value=(float(freq_min), float(freq_max)),
+                value=st.session_state.freq_slider_values,
                 step=float((freq_max - freq_min) / 1000),
-                key="freq_slider"
+                key=slider_key
             )
-        
+            
+            # Atualizar session_state com o valor atual do slider
+            st.session_state.freq_slider_values = freq_range
+
         with col2:
             # Campo de entrada para frequência mínima
             min_freq_input = st.number_input(
@@ -97,9 +105,9 @@ def create_experimental_viewer():
                 value=float(freq_range[0]),
                 step=0.001,
                 format="%.3f",
-                key="min_freq_input"
+                key=f"min_freq_{uploaded_file.name}"
             )
-        
+
         with col3:
             # Campo de entrada para frequência máxima
             max_freq_input = st.number_input(
@@ -109,18 +117,17 @@ def create_experimental_viewer():
                 value=float(freq_range[1]),
                 step=0.001,
                 format="%.3f",
-                key="max_freq_input"
+                key=f"max_freq_{uploaded_file.name}"
             )
-        
-        # Sincronizar slider e inputs
-        if (min_freq_input, max_freq_input) != (freq_range[0], freq_range[1]):
-            st.session_state.freq_slider = (min_freq_input, max_freq_input)
+
+        # Sincronizar inputs numéricos com o slider
+        if (min_freq_input, max_freq_input) != st.session_state.freq_slider_values:
+            st.session_state.freq_slider_values = (min_freq_input, max_freq_input)
             st.rerun()
-        
-        if st.session_state.get('freq_slider') != (min_freq_input, max_freq_input):
-            min_freq_input, max_freq_input = st.session_state.freq_slider
-            st.rerun()
-        
+
+        # Usar os valores sincronizados
+        min_freq_input, max_freq_input = st.session_state.freq_slider_values
+
         # Filtrar dados pela faixa de frequência
         filtered_df = df[
             (df['freq_ghz'] >= min_freq_input) & 
