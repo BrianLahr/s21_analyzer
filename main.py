@@ -9,6 +9,7 @@ import io
 from utils.file_handlers import handle_file_upload, display_file_preview
 from utils.data_processors import identify_columns, process_data
 from utils.correlation_analyzer import create_correlation_tab
+from utils.experimental_viewer import create_experimental_tab
 
 # ======================
 # Setup da UI
@@ -62,13 +63,14 @@ def setup_ui():
             st.session_state.uploader_key += 1
 
     #Abas principais - ADICIONE A NOVA ABA
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([  # Mude para 6 abas
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([  # Mude para 7 abas
         "📈 Análise de Dados S11/S21", 
         "📊 Visualização de Resultados",
         "🔄 Comparação de Curvas", 
         "🗂️ Organizador de Resultados",
         "⚙️ Circuito Equivalente",
-        "📊 Análise de Correlação"  # NOVA ABA
+        "📊 Análise de Correlação",
+        "🔬 Dados Experimentais"  # NOVA ABA
     ])
     
     with tab1:
@@ -106,6 +108,9 @@ def setup_ui():
 
     with tab6:  # NOVA ABA
         create_correlation_tab()
+
+    with tab7:  # NOVA ABA
+        create_experimental_tab()
 
 # ======================
 # Circuito Equivalente - Versão Melhorada
