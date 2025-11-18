@@ -66,58 +66,28 @@ def create_experimental_viewer():
                 value=True,
                 help="Ajustar descontinuidades de fase"
             )
-    
+        
         # Controles de frequência
         st.markdown("---")
         st.subheader("📊 Controle de Faixa de Frequência")
-
+        
         # Obter limites de frequência
         freq_min = float(df['freq_ghz'].min())
         freq_max = float(df['freq_ghz'].max())
-
-        # Criar inputs para limites inferior e superior
-        col1, col2, col3 = st.columns([2, 1, 1])
-
-        with col2:
-            min_freq_input = st.number_input(
-                "Freq. mínima (GHz):",
-                min_value=freq_min,
-                max_value=freq_max,
-                value=freq_min,
-                step=0.001,
-                format="%.3f",
-                key=f"min_freq_{uploaded_file.name}"
-            )
-
-        with col3:
-            max_freq_input = st.number_input(
-                "Freq. máxima (GHz):",
-                min_value=freq_min,
-                max_value=freq_max,
-                value=freq_max,
-                step=0.001,
-                format="%.3f",
-                key=f"max_freq_{uploaded_file.name}"
-            )
-
-        with col1:
-            # Criar slider sincronizado com os inputs
-            freq_range = st.slider(
-                "Faixa de frequência (GHz):",
-                min_value=freq_min,
-                max_value=freq_max,
-                value=(min_freq_input, max_freq_input),
-                step=float((freq_max - freq_min) / 1000),
-                key=f"freq_slider_{uploaded_file.name}"
-            )
-
-        # Atualizar os inputs numéricos se o slider foi modificado
-        if freq_range != (min_freq_input, max_freq_input):
-            # Não precisamos atualizar session_state, o slider já reflete a mudança
-            # Apenas usamos os valores do slider diretamente
-            min_freq_input, max_freq_input = freq_range
-            # Não chamamos st.rerun() para evitar loop infinito
-
+        
+        # Slider de frequência
+        freq_range = st.slider(
+            "Faixa de frequência (GHz):",
+            min_value=freq_min,
+            max_value=freq_max,
+            value=(freq_min, freq_max),
+            step=float((freq_max - freq_min) / 1000),
+            key=f"freq_slider_{uploaded_file.name}"
+        )
+        
+        # Extrair valores do slider
+        min_freq_input, max_freq_input = freq_range
+        
         # Filtrar dados pela faixa de frequência
         filtered_df = df[
             (df['freq_ghz'] >= min_freq_input) & 
